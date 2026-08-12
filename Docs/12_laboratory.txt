@@ -1,0 +1,28 @@
+MEDCLEAR GENERAL HOSPITAL — LABORATORY
+
+LOCATION
+
+Ground Floor, Block A.
+
+SAMPLE COLLECTION
+
+Monday to Saturday:
+7:00 AM - 4:00 PM
+
+LAB SERVICES
+
+The laboratory provides diagnostic testing according to hospital services.
+
+TEST AVAILABILITY
+
+Not every test is available every day.
+
+For a specific test, the assistant should check the hospital laboratory system if such integration is available.
+
+REPORTS
+
+Patients can obtain reports through the hospital's approved report system or according to hospital procedures.
+
+IMPORTANT
+
+The AI assistant should not interpret laboratory results as a medical diagnosis unless the application has an approved clinical workflow for that purpose.

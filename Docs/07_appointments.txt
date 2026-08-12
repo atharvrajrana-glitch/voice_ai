@@ -1,0 +1,37 @@
+MEDCLEAR GENERAL HOSPITAL — APPOINTMENTS
+
+BOOKING AN APPOINTMENT
+
+Patients can request appointments through:
+1. Hospital reception
+2. Hospital appointment system
+
+Information that may be required:
+- Patient name
+- Contact number
+- Department
+- Preferred doctor
+- Preferred date
+- Preferred time
+
+ARRIVAL
+
+Patients should arrive at least 15 minutes before their appointment.
+
+CANCELLATION
+
+Patients should cancel appointments as early as possible if they cannot attend.
+
+RESCHEDULING
+
+Patients can request a different appointment time through the appointment system or reception.
+
+WALK-IN PATIENTS
+
+Walk-in patients may be accepted depending on department capacity.
+
+IMPORTANT
+
+Doctor availability and appointment availability are not always the same.
+
+An appointment should be considered confirmed only after the hospital appointment system confirms it.

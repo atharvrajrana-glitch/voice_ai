@@ -1,0 +1,40 @@
+MEDCLEAR GENERAL HOSPITAL
+
+IMPORTANT:
+This is fictional test data created for an AI/RAG application.
+It must not be used for real medical decisions.
+
+Hospital Name:
+MedClear General Hospital
+
+Address:
+25 Green Park Road, Central City.
+
+Main Reception:
++91-00000-00000
+
+Emergency Department:
+Open 24 hours a day, 7 days a week.
+
+Main Reception Hours:
+Monday to Saturday: 8:00 AM to 8:00 PM
+Sunday: 9:00 AM to 5:00 PM
+
+Hospital Building:
+The hospital has two main blocks:
+Block A and Block B.
+
+Main Entrance:
+Gate 1 is the primary entrance.
+
+Emergency Entrance:
+The emergency department has a separate entrance near Gate 2.
+
+Parking:
+Visitor parking is available near Gate 1.
+
+Registration:
+New patients can register at the main reception desk.
+
+Patient Identification:
+Patients may be asked to provide identification and relevant appointment information during registration.

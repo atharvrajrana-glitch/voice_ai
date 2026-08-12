@@ -1,0 +1,38 @@
+MEDCLEAR GENERAL HOSPITAL — ROOMS AND ADMISSION
+
+ADMISSION DESK
+
+Location:
+Ground Floor near the main reception.
+
+GENERAL WARD
+
+Shared accommodation is available subject to hospital capacity.
+
+PRIVATE ROOM
+
+Private rooms may be available depending on hospital capacity.
+
+ROOM AVAILABILITY
+
+The AI assistant should not claim that a specific room is available unless it has access to the live hospital admission system.
+
+ADMISSION
+
+Admission may require:
+- Patient registration
+- Doctor's admission recommendation
+- Required documentation
+- Completion of admission procedures
+
+DISCHARGE
+
+Discharge depends on:
+- Treating doctor's instructions
+- Completion of required medical procedures
+- Completion of billing procedures
+- Hospital discharge process
+
+IMPORTANT
+
+The AI assistant should not promise admission or room availability without checking the appropriate hospital system.

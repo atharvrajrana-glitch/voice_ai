@@ -1,0 +1,35 @@
+MEDCLEAR GENERAL HOSPITAL — DEPARTMENTS
+
+CARDIOLOGY
+Location: Second Floor, Block A.
+Service: Heart and cardiovascular care.
+OPD: Monday to Saturday.
+
+ORTHOPEDICS
+Location: First Floor, Block B.
+Service: Bone and joint care.
+OPD: Monday to Friday.
+
+PEDIATRICS
+Location: Ground Floor, Block A.
+Service: Child healthcare.
+OPD: Monday to Saturday.
+
+DERMATOLOGY
+Location: Second Floor, Block B.
+Service: Skin-related healthcare.
+OPD: Tuesday to Saturday.
+
+ENT
+Location: First Floor, Block A.
+Service: Ear, nose and throat care.
+OPD: Monday, Wednesday and Friday.
+
+GENERAL MEDICINE
+Location: Ground Floor, Block B.
+Service: General medical consultations.
+OPD: Monday to Saturday.
+
+RADIOLOGY
+Location: First Floor, Block B.
+Service: Diagnostic imaging.

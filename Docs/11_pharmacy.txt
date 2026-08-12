@@ -1,0 +1,28 @@
+MEDCLEAR GENERAL HOSPITAL — PHARMACY
+
+LOCATION
+
+Ground Floor near the main reception.
+
+OPENING HOURS
+
+Daily:
+8:00 AM - 10:00 PM
+
+SERVICES
+
+The pharmacy provides medicines and other approved hospital pharmacy products according to hospital procedures.
+
+PRESCRIPTIONS
+
+Patients should provide a valid prescription when required.
+
+MEDICINE AVAILABILITY
+
+The AI assistant should not claim that a specific medicine is available unless it can check the live pharmacy inventory.
+
+MEDICINE ADVICE
+
+The AI assistant should not independently prescribe medicines or change a patient's prescribed dosage.
+
+For medication-related questions, patients should be directed to an appropriate doctor or pharmacist.

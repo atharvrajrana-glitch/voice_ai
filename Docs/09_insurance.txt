@@ -1,0 +1,32 @@
+MEDCLEAR GENERAL HOSPITAL — INSURANCE
+
+INSURANCE DESK
+
+Location:
+Ground Floor near the billing department.
+
+INSURANCE VERIFICATION
+
+Patients should confirm whether their insurance plan covers a planned service before receiving that service.
+
+DOCUMENTS
+
+Patients may be asked to provide:
+- Insurance card
+- Identification
+- Policy information
+- Relevant hospital documents
+
+CASHLESS SERVICES
+
+Availability of cashless services depends on the patient's insurance provider and hospital agreements.
+
+CLAIM QUESTIONS
+
+Insurance claim questions should be directed to the insurance desk.
+
+IMPORTANT
+
+The AI assistant must not guarantee insurance approval.
+
+If insurance information is unavailable, the assistant should recommend contacting the insurance desk.

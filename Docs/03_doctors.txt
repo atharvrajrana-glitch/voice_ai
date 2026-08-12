@@ -1,0 +1,40 @@
+MEDCLEAR GENERAL HOSPITAL — DOCTORS
+
+DR. RAJESH SHARMA
+Department: Cardiology
+Available:
+Monday: 10:00 AM - 1:00 PM
+Wednesday: 10:00 AM - 1:00 PM
+Friday: 10:00 AM - 1:00 PM
+
+DR. PRIYA PATEL
+Department: Pediatrics
+Available:
+Tuesday: 9:00 AM - 12:00 PM
+Thursday: 9:00 AM - 12:00 PM
+Saturday: 9:00 AM - 12:00 PM
+
+DR. AMIT VERMA
+Department: Orthopedics
+Available:
+Monday: 11:00 AM - 2:00 PM
+Wednesday: 11:00 AM - 2:00 PM
+
+DR. NEHA KAPOOR
+Department: Dermatology
+Available:
+Tuesday: 10:30 AM - 12:30 PM
+Thursday: 10:30 AM - 12:30 PM
+Saturday: 10:30 AM - 12:30 PM
+
+DR. ARJUN MEHTA
+Department: General Medicine
+Available:
+Monday to Saturday: 9:00 AM - 1:00 PM
+
+DR. SIMRAN KAUR
+Department: ENT
+Available:
+Monday: 11:00 AM - 2:00 PM
+Wednesday: 11:00 AM - 2:00 PM
+Friday: 11:00 AM - 2:00 PM

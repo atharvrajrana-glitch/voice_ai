@@ -1,0 +1,35 @@
+MEDCLEAR GENERAL HOSPITAL — BILLING
+
+BILLING DESK
+Location:
+Ground Floor near the main reception.
+
+Hours:
+Monday to Saturday:
+8:00 AM - 7:00 PM
+
+PAYMENT METHODS
+
+The hospital accepts:
+- Cash
+- Debit cards
+- Credit cards
+- Supported digital payment methods
+
+BILLING QUESTIONS
+
+Patients can contact the billing desk for questions about:
+- Hospital bills
+- Payment status
+- Receipts
+- Refund requests
+
+REFUNDS
+
+Refund requests are handled according to hospital policy.
+
+IMPORTANT
+
+The AI assistant should not invent treatment costs or billing amounts.
+
+If a specific price is not present in the hospital knowledge base, the assistant should tell the patient that the price information is unavailable and direct them to the billing department.
