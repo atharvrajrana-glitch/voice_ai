@@ -1,4 +1,4 @@
-from vector_store import search_documents
+from .vector_store import search_documents
 
 
 query = "Cardiology ki OPD kab open hoti hai?"

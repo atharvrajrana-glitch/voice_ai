@@ -1,6 +1,6 @@
-from loader import load_documents
-from chunker import chunk_text
-from vector_store import add_document
+from .loader import load_documents
+from .chunker import chunk_text
+from .vector_store import add_document
 
 
 def ingest_documents():

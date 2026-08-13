@@ -1,4 +1,4 @@
-from pipeline import generate_answer
+from .pipeline import generate_answer
 
 
 question = "Cardiology ki OPD kab open hoti hai?"

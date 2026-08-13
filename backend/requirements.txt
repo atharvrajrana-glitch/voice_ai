@@ -3,3 +3,7 @@ uvicorn[standard]
 google-genai
 python-dotenv
 pydantic
+pypdf
+PyMuPDF
+pytesseract
+Pillow

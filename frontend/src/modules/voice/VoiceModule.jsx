@@ -219,7 +219,7 @@ export default function VoiceModule() {
           MedClear voice assistant
         </div>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: "26px", fontWeight: 500, color: "#1F332C", marginTop: "6px" }}>
-          Voice + AI core, connected
+          Voice AI core
         </div>
       </div>
 
@@ -274,7 +274,7 @@ export default function VoiceModule() {
           </div>
 
           <div style={{ minHeight: "24px", fontSize: "14px", color: "#6B7A73", marginBottom: "20px", textAlign: "center" }}>
-            {phase === "idle" && "Tap to begin — the assistant will greet you first."}
+            {phase === "idle" && "Tap to begin"}
             {phase === "greeting" && "Speaking..."}
             {phase === "listening" && (interim ? `"${interim}"` : "Listening...")}
             {phase === "thinking" && "Thinking..."}

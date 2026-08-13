@@ -10,7 +10,7 @@
 3. Install dependencies:
    - `pip install -r requirements.txt`
 4. Run the backend:
-   - `uvicorn main:app --reload --host 127.0.0.1 --port 8000`
+   - `uvicorn main:app --reload --host 127.0.0.1 --port 8080`
 
 ### Frontend
 1. Open a terminal in `frontend`
@@ -23,5 +23,4 @@
 - Frontend: `http://localhost:5173`
 - Backend: `http://127.0.0.1:8000`
 
-## API
-- `GET /api/hello` returns a JSON message
+

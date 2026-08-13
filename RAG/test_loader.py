@@ -1,5 +1,5 @@
-from loader import load_documents
-from chunker import chunk_text
+from .loader import load_documents
+from .chunker import chunk_text
 
 
 documents = load_documents()
