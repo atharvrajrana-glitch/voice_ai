@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: medclear-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: medclear
+      POSTGRES_USER: medclear_user
+      POSTGRES_PASSWORD: 123456
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - medclear_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medclear_user -d medclear"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  medclear_postgres_data:

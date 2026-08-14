@@ -12,10 +12,6 @@ POST /api/ai-core with { "text": "..." } and gets back
 import sys
 import os
 
-# The RAG folder lives at the project root (a sibling of backend/, not
-# inside it), so add the project root to Python's search path before
-# anything tries to import it. This must happen before the ai_core
-# import below, since that's what triggers "from RAG.retrieval import".
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -32,6 +28,14 @@ from ai_core.service import get_ai_response
 from patient_docs.ingest import ingest_pdf
 from patient_docs.service import answer_from_document
 
+from sqlalchemy import text
+
+from app.core.database import AsyncSessionLocal
+from routers.patients import router as patients_router
+from routers.sessions import router as sessions_router
+from routers.appointments import router as appointments_router
+from routers.doctors import router as doctors_router
+
 app = FastAPI(title="MedClear AI Core")
 
 app.add_middleware(
@@ -44,9 +48,6 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     text: str
-
-
-
 
 class PatientDocQARequest(BaseModel):
     question: str
@@ -72,3 +73,17 @@ async def patient_doc_upload_endpoint(file: UploadFile = File(...), session_id: 
 @app.post("/api/patient-doc/ask")
 def patient_doc_ask_endpoint(req: PatientDocQARequest):
     return answer_from_document(req.question, req.session_id)
+
+@app.get("/health/db")
+async def database_health():
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("SELECT 1"))
+        return {
+            "database": "connected",
+            "result": result.scalar()
+        }
+    
+app.include_router(patients_router)
+app.include_router(sessions_router)
+app.include_router(appointments_router)
+app.include_router(doctors_router)
