@@ -25,6 +25,7 @@ NOT_FOUND_REPLY = (
 ERROR_REPLY = "Sorry, I had trouble reading your document just now. Please try again."
 
 
+
 def answer_from_document(question: str, session_id: str) -> dict:
     if not question or not question.strip():
         return {"reply": "I didn't catch a question.", "resolved": False, "language_code": "en-US", "source": None}

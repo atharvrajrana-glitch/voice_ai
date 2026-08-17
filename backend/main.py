@@ -9,6 +9,7 @@ POST /api/ai-core with { "text": "..." } and gets back
 { "reply": "...", "resolved": true/false, "language": "..." }
 """
 
+import asyncio
 import sys
 import os
 
@@ -20,17 +21,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from ai_core.service import get_ai_response
+from ai_core.service import get_ai_response, _validate_and_refresh_session
 from patient_docs.ingest import ingest_pdf
 from patient_docs.service import answer_from_document
 
 from sqlalchemy import text
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+from uuid import UUID
 from routers.patients import router as patients_router
 from routers.sessions import router as sessions_router
 from routers.appointments import router as appointments_router
@@ -40,7 +44,8 @@ app = FastAPI(title="MedClear AI Core")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://localhost:5\d{3}",
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -48,6 +53,7 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     text: str
+    document_mode: bool = False
 
 class PatientDocQARequest(BaseModel):
     question: str
@@ -60,8 +66,43 @@ def health():
 
 
 @app.post("/api/ai-core")
-def ai_core_endpoint(req: QueryRequest):
-    return get_ai_response(req.text)
+async def ai_core_endpoint(
+    req: QueryRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    session = None
+    if x_session_id:
+        try:
+            session = await _validate_and_refresh_session(UUID(x_session_id), db)
+        except (ValueError, TypeError):
+            session = None
+
+    # A PDF is actively attached in the Voice Assistant. Answer it directly
+    # instead of first asking Gemini to select a tool and then asking it again
+    # to format the tool result. This removes two serial model round-trips.
+    if req.document_mode and session:
+        try:
+            answer = await asyncio.to_thread(answer_from_document, req.text, str(session.id))
+            return {
+                "reply": answer.get("reply", "Sorry, I had trouble reading your document just now. Please try again."),
+                "resolved": bool(answer.get("resolved", False)),
+                "language": answer.get("language") or answer.get("language_code", "English"),
+                "sources": [answer["source"]] if answer.get("source") else [],
+            }
+        except Exception:
+            return {
+                "reply": "Sorry, I had trouble reading your document just now. Please try again.",
+                "resolved": False,
+                "language": "English",
+                "sources": [],
+            }
+    return await get_ai_response(
+        req.text,
+        session_id=session.id if session else None,
+        patient_id=session.patient_id if session else None,
+        db=db,
+    )
 
 
 @app.post("/api/patient-doc/upload")
