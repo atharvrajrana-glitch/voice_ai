@@ -5,9 +5,6 @@ import { uploadPatientDocument } from "../patientDocs/api";
 
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap";
 
-// Maps the "language" field our AI core returns (e.g. "Hindi") to a
-// BCP-47 locale code the browser's speech synthesis understands.
-// Falls back to English if we don't recognize what came back.
 function toSpeechLocale(languageName) {
   if (!languageName) return "en-US";
   const map = {
@@ -37,21 +34,14 @@ function toSpeechLocale(languageName) {
   return "en-US";
 }
 
-// Use the script in the reply as a reliable fallback if the model omits or
-// mislabels its language field. Hindi is written in the Devanagari block.
-function getReplyLocale(reply, languageName) {
-  if (/[\u0900-\u097F]/.test(reply || "")) return "hi-IN";
-  return toSpeechLocale(languageName);
-}
-
 export default function VoiceModule({ patientName = "" }) {
-  const [phase, setPhase] = useState("idle"); // idle | greeting | listening | thinking | speaking | unsupported
+  const [phase, setPhase] = useState("idle"); 
   const [transcriptLog, setTranscriptLog] = useState([]);
   const [interim, setInterim] = useState("");
   const [textQuestion, setTextQuestion] = useState("");
   const [needsGreeting, setNeedsGreeting] = useState(true);
   const [uploadedFile, setUploadedFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState(null); // null | uploading | done | error
+  const [uploadStatus, setUploadStatus] = useState(null); 
   const [uploadMessage, setUploadMessage] = useState("");
   const recognitionRef = useRef(null);
   const keepAliveRef = useRef(null);
@@ -69,9 +59,6 @@ export default function VoiceModule({ patientName = "" }) {
       setPhase("unsupported");
     }
 
-    // Voice list loads asynchronously and is often empty on the very
-    // first call. Preload it now and keep it updated, so by the time
-    // we need a Hindi (or other) voice, it's actually available.
     const loadVoices = () => {
       voicesRef.current = window.speechSynthesis.getVoices();
     };
@@ -86,17 +73,14 @@ export default function VoiceModule({ patientName = "" }) {
     };
   }, []);
 
-  const speak = useCallback((text, who, onDone, locale) => {
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.resume(); // works around Chrome silently stalling after a delay
+  const speak = useCallback((text, who, onDone, locale, skipLog = false) => {
+    window.speechSynthesis.resume(); 
+    
     const utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.98;
     utter.pitch = 1.0;
     utter.lang = locale || "en-US";
 
-    // Setting .lang alone isn't reliable — explicitly find and set the
-    // matching voice object, preferring an exact match, then falling
-    // back to any voice for the same language family (e.g. "hi").
     const voices = voicesRef.current.length ? voicesRef.current : window.speechSynthesis.getVoices();
     const wantLang = (locale || "en-US").toLowerCase();
     const wantPrefix = wantLang.split("-")[0];
@@ -113,8 +97,13 @@ export default function VoiceModule({ patientName = "" }) {
       clearInterval(keepAliveRef.current);
       onDone && onDone();
     };
+    
     setPhase("speaking");
-    setTranscriptLog((log) => [...log, { who, text }]);
+    
+    if (!skipLog) {
+      setTranscriptLog((log) => [...log, { who, text }]);
+    }
+    
     window.speechSynthesis.speak(utter);
   }, []);
 
@@ -151,35 +140,81 @@ export default function VoiceModule({ patientName = "" }) {
     recognition.start();
   }, []);
 
-  // This is the ONLY function that changed from Module 1.
-  // It used to return a fixed placeholder message. Now it calls
-  // Module 2's AI core and speaks back a real answer.
   const handlePatientText = useCallback(
     async (heardText) => {
+      window.speechSynthesis.cancel();
       setPhase("thinking");
+      
+      let fullSentence = "";
+      let accumulatedTTSBuffer = "";
+      let hasStartedSpeaking = false;
+
       try {
         const startListeningAfterSpeech = () => {
           if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
             window.setTimeout(startListeningAfterSpeech, 120);
             return;
           }
-          if (streamedResolved === false) console.log("Marked unresolved — escalation module will handle this later.");
-          startListening();
-        };
-        const { reply, resolved, language } = await askAICore(heardText, {
-          documentMode: uploadStatus === "done",
-        });
-        const safeReply = reply && reply.trim()
-          ? reply
-          : "Sorry, I wasn't able to work out an answer to that. Could you try asking again?";
-        const locale = getReplyLocale(safeReply, language);
-        speak(safeReply, "ai", () => {
-          if (resolved === false) {
-            // Placeholder hook for Module 5 (escalation) — not built yet.
-            console.log("Marked unresolved — escalation module will handle this later.");
+
+          // --- NEW: Conversation End Detector ---
+          // Checks if the AI included a farewell phrase in its final response
+          const isClosingStatement = /(goodbye|have a (wonderful|great|good) day|bye\b|reach out if you need|take care)/i.test(fullSentence);
+          
+          if (isClosingStatement) {
+             setPhase("idle");          // Power down the microphone
+             setNeedsGreeting(true);    // Reset so the user can start a new session later
+          } else {
+             startListening();          // Keep the conversation going
           }
-          startListening();
-        }, locale);
+        };
+
+        const { reply, resolved, language } = await askAICore(
+          heardText,
+          { documentMode: uploadStatus === "done" },
+          (newWord) => {
+             fullSentence += newWord;
+             
+             setTranscriptLog((currentLog) => {
+                const newLog = [...currentLog];
+                const lastIndex = newLog.length - 1;
+                const lastEntry = newLog[lastIndex];
+                
+                if (lastEntry && lastEntry.who === "ai") {
+                    newLog[lastIndex] = { ...lastEntry, text: fullSentence };
+                } else {
+                    newLog.push({ who: "ai", text: fullSentence });
+                }
+                return newLog;
+             });
+
+             accumulatedTTSBuffer += newWord;
+             
+             if (/[.,!?]\s*$/.test(accumulatedTTSBuffer)) {
+                 const textToSpeak = accumulatedTTSBuffer.trim();
+                 accumulatedTTSBuffer = ""; 
+                 
+                 if (textToSpeak) {
+                    if (!hasStartedSpeaking) {
+                        setPhase("speaking");
+                        hasStartedSpeaking = true;
+                    }
+                    speak(textToSpeak, "ai", null, "en-US", true); 
+                 }
+             }
+          }
+        );
+
+        if (accumulatedTTSBuffer.trim()) {
+           speak(accumulatedTTSBuffer.trim(), "ai", () => {
+               if (resolved === false) {
+                 console.log("Marked unresolved — escalation module will handle this later.");
+               }
+               startListeningAfterSpeech();
+           }, "en-US", true);
+        } else {
+            startListeningAfterSpeech();
+        }
+
       } catch (err) {
         console.error("Unable to get an AI-core response:", err);
         speak(

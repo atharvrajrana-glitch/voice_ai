@@ -1,3 +1,5 @@
+import asyncio
+
 from .vector_store import search_documents
 from google import genai
 from dotenv import load_dotenv
@@ -10,10 +12,17 @@ client = genai.Client(
 )
 
 
-def generate_answer(question: str):
+def _generate_content(prompt: str):
+    return client.models.generate_content(
+        model="gemini-3.5-flash",
+        contents=prompt,
+    )
+
+
+async def generate_answer(question: str):
 
     # Retrieve relevant hospital information
-    results = search_documents(
+    results = await search_documents(
         question,
         n_results=3
     )
@@ -52,10 +61,7 @@ Patient Question:
 {question}
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.5-flash",
-        contents=prompt
-    )
+    response = await asyncio.to_thread(_generate_content, prompt)
 
     return {
         "reply": response.text.strip(),

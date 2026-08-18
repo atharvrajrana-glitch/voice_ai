@@ -1,12 +1,11 @@
+import asyncio
+
 from .vector_store import search_documents
 
 
 query = "Cardiology ki OPD kab open hoti hai?"
 
-results = search_documents(
-    query,
-    n_results=3
-)
+results = asyncio.run(search_documents(query, n_results=3))
 
 
 print("\nQUERY:")

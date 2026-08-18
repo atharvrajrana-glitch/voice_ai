@@ -1,8 +1,7 @@
-
 const AI_CORE_URL = "http://localhost:8080/api/ai-core";
 const API_BASE_URL = "http://localhost:8080";
 
-export async function askAICore(text, { documentMode = false } = {}) {
+export async function askAICore(text, { documentMode = false } = {}, onChunk) {
   const headers = { "Content-Type": "application/json" };
   const sessionId = localStorage.getItem("medclear_session_id");
   if (sessionId) headers["X-Session-ID"] = sessionId;
@@ -10,14 +9,67 @@ export async function askAICore(text, { documentMode = false } = {}) {
   const response = await fetch(AI_CORE_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify({ text, document_mode: documentMode }),
+    body: JSON.stringify({ 
+      text: text, 
+      document_mode: documentMode,
+      stream: true 
+    }),
   });
 
   if (!response.ok) {
     throw new Error(`AI core request failed: ${response.status}`);
   }
 
-  return response.json();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  
+  let fullReply = "";
+  let buffer = ""; // <--- A buffer catches chopped up network packets
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    
+    // Split safely only when a full event (\n\n) has arrived
+    const parts = buffer.split("\n\n");
+    
+    // The last part might be an incomplete packet, save it for the next loop
+    buffer = parts.pop();
+
+    for (const line of parts) {
+      if (line.startsWith("data:")) {
+        // Strip the data prefix, safely keeping the JSON string
+        const rawData = line.replace(/^data:\s*/, "");
+
+        if (rawData === "[DONE]") {
+          return { reply: fullReply.trim(), resolved: true, language: "en" };
+        }
+        if (rawData.startsWith("[ERROR]")) {
+          throw new Error(rawData);
+        }
+
+        try {
+          // Parse the JSON object payload to safely extract the text (and spaces!)
+          const parsed = JSON.parse(rawData);
+          
+          if (parsed && typeof parsed.text === "string") {
+            const textData = parsed.text;
+            fullReply += textData;
+            
+            if (onChunk) {
+              onChunk(textData);
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to parse chunk:", rawData);
+        }
+      }
+    }
+  }
+
+  return { reply: fullReply.trim(), resolved: true, language: "en" };
 }
 
 export async function createSession(phone) {

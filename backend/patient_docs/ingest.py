@@ -7,7 +7,7 @@ from .medical_report import detect_document_type, extract_lab_rows, lab_row_chun
 from .vector_store import add_chunk
 
 
-def ingest_pdf(file_bytes: bytes, filename: str, session_id: str) -> dict:
+async def ingest_pdf(file_bytes: bytes, filename: str, session_id: str) -> dict:
     try:
         pages = extract_pages(file_bytes)
     except OCRUnavailableError as error:
@@ -30,7 +30,7 @@ def ingest_pdf(file_bytes: bytes, filename: str, session_id: str) -> dict:
         document_type = detect_document_type(page_info["text"])
 
         for row in extract_lab_rows(page_info["text"], page_info["page"], document_type):
-            add_chunk(
+            await add_chunk(
                 lab_row_chunk(row),
                 session_id,
                 filename,
@@ -48,7 +48,7 @@ def ingest_pdf(file_bytes: bytes, filename: str, session_id: str) -> dict:
             total_lab_rows += 1
 
         for chunk_text in chunk_page(page_info["text"]):
-            add_chunk(
+            await add_chunk(
                 chunk_text,
                 session_id,
                 filename,

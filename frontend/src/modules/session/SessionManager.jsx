@@ -51,7 +51,6 @@ export default function SessionManager({ children }) {
         <style>{`@keyframes sessionSpin { to { transform: rotate(360deg); } }`}</style>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", color: "#1F6F64", fontSize: "18px", fontWeight: 500 }}>
           <LoaderCircle size={25} strokeWidth={2} style={{ animation: "sessionSpin .9s linear infinite" }} />
-          Checking your secure session...
         </div>
       </main>
     );

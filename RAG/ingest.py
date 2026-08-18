@@ -1,9 +1,11 @@
+import asyncio
+
 from .loader import load_documents
 from .chunker import chunk_text
 from .vector_store import add_document
 
 
-def ingest_documents():
+async def ingest_documents():
 
     documents = load_documents()
 
@@ -24,7 +26,7 @@ def ingest_documents():
 
             chunk_id = f"{filename}_{index}"
 
-            add_document(
+            await add_document(
                 chunk=chunk,
                 filename=filename,
                 chunk_id=chunk_id
@@ -42,4 +44,4 @@ def ingest_documents():
 
 
 if __name__ == "__main__":
-    ingest_documents()
+    asyncio.run(ingest_documents())

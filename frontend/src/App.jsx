@@ -21,7 +21,6 @@ export default function App() {
       {(session) => (
       <div style={{ minHeight: "calc(100vh - 65px)", display: "flex" }}>
         <aside style={{ position: "sticky", top: "65px", alignSelf: "flex-start", width: "218px", height: "calc(100vh - 65px)", flexShrink: 0, padding: "24px 14px", overflowY: "auto", background: "#FFFFFF", borderRight: "1px solid #E9E4D8", boxSizing: "border-box" }}>
-          <p style={{ margin: "0 14px 14px", color: "#9A9384", font: "700 11px Inter, sans-serif", letterSpacing: ".09em", textTransform: "uppercase" }}>Navigation</p>
           <button type="button" onClick={() => setPage("home")} style={navButtonStyle(page === "home")}><Home size={18} /> Home</button>
           <button type="button" onClick={() => setPage("voice")} style={{ ...navButtonStyle(page === "voice"), marginTop: "4px" }}><Mic size={18} /> Voice Assistant</button>
         </aside>

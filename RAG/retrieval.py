@@ -10,9 +10,9 @@ grounding, same as it did before RAG existed.
 from .vector_store import search_documents
 
 
-def retrieve_hospital_context(question: str, n_results: int = 3):
+async def retrieve_hospital_context(question: str, n_results: int = 3):
     try:
-        results = search_documents(question, n_results=n_results)
+        results = await search_documents(question, n_results=n_results)
         documents = results.get("documents", [[]])[0]
         metadatas = results.get("metadatas", [[]])[0]
 

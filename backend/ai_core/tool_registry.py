@@ -78,7 +78,7 @@ async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) ->
     try:
         logger.info("TOOL_SELECTED: %s", name)
         if name == "search_hospital":
-            hospital_context, sources = retrieve_hospital_context(str(args["question"]).strip())
+            hospital_context, sources = await retrieve_hospital_context(str(args["question"]).strip())
             result = {"ok": bool(hospital_context), "context": hospital_context or "", "sources": sources}
         elif name == "find_doctors":
             department = str(args.get("department") or "").strip()
@@ -137,6 +137,6 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
         _pending_bookings.pop(context.session_id, None)
         return {"ok": True, "booked": True, "doctor_name": appointment.doctor.name, "date": appointment.appointment_date.isoformat(), "time": appointment.appointment_time.isoformat(timespec="minutes"), "status": appointment.status}
     if name == "patient_document_qa":
-        answer = answer_from_document(str(args["question"]), str(context.session_id))
+        answer = await answer_from_document(str(args["question"]), str(context.session_id))
         return {"ok": bool(answer.get("resolved")), "reply": answer.get("reply"), "source": answer.get("source")}
     return {"ok": False, "error": "That action is unavailable."}

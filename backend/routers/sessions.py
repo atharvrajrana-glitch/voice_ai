@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_db
 from schemas.session import PatientSignUp, SessionCreate, SessionResponse
 from ai_core.service import close_patient_session, create_patient_session, register_patient_and_create_session
 from ai_core.service import get_current_session
 from app.models.patient_session import PatientSession
 from app.models.patient import Patient
+
+
 router = APIRouter(
     prefix="/api/v1/sessions",
     tags=["Sessions"],

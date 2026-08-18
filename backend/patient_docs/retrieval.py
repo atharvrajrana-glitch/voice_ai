@@ -7,9 +7,9 @@ instead of crashing if the store is empty or errors.
 from .vector_store import search_chunks
 
 
-def retrieve_relevant_chunks(question: str, session_id: str, n_results: int = 3) -> list[dict]:
+async def retrieve_relevant_chunks(question: str, session_id: str, n_results: int = 3) -> list[dict]:
     try:
-        results = search_chunks(question, session_id, n_results=n_results)
+        results = await search_chunks(question, session_id, n_results=n_results)
         documents = results.get("documents", [[]])[0]
         metadatas = results.get("metadatas", [[]])[0]
 
