@@ -31,15 +31,17 @@ def _add_to_collection(
     document_name: str,
     page: int,
     chunk_id: str,
+    embedding: list,  # 🛠️ ADDED: Now the function knows what embedding is!
     extra_metadata: dict | None = None,
 ):
     metadata = {"session_id": session_id, "document": document_name, "page": page}
     if extra_metadata:
         metadata.update({key: value for key, value in extra_metadata.items() if value is not None})
+        
     collection.add(
         ids=[chunk_id],
         documents=[chunk_text],
-        embeddings=[embedding],
+        embeddings=[embedding], 
         metadatas=[metadata],
     )
 
@@ -50,10 +52,10 @@ async def add_chunk(
     document_name: str,
     page: int,
     chunk_id: str,
-    embedding,
     extra_metadata: dict | None = None,
 ):
     embedding = await create_embedding(chunk_text)
+    
     await asyncio.to_thread(
         _add_to_collection,
         chunk_text,
@@ -61,8 +63,8 @@ async def add_chunk(
         document_name,
         page,
         chunk_id,
-        embedding,
-        extra_metadata,
+        embedding,       
+        extra_metadata,  
     )
 
 

@@ -92,6 +92,17 @@ def get_cache_info(user_text: str, patient_id: str | None, session_id: str | Non
     return cache_key, ttl
 
 
+def is_emergency_request(user_text: str) -> bool:
+    """Emergency requests must bypass Redis and always reach the alert tool."""
+    normalized = re.sub(r"[^\w\s]", " ", user_text.lower())
+    emergency_phrases = (
+        "chest pain", "heart attack", "stroke", "severe bleeding",
+        "cant breathe", "cannot breathe", "difficulty breathing",
+        "emergency", "unconscious",
+    )
+    return any(phrase in normalized for phrase in emergency_phrases)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -137,6 +148,7 @@ async def ai_core_endpoint(
 
         return {"reply": reply_text, "resolved": resolved, "language": language, "sources": sources}
 
+    emergency_request = is_emergency_request(req.text)
     cache_key, ttl = get_cache_info(
         user_text=req.text, 
         patient_id=str(patient_id) if patient_id else None, 
@@ -157,17 +169,18 @@ async def ai_core_endpoint(
                         yield f"data: {payload}\n\n"
                         await asyncio.sleep(0.02) 
 
-            # Try Cache First
-            try:
-                cached_reply = await redis_client.get(cache_key)
-                if cached_reply:
-                    ai_core_logger.info(f"ai_cache_hit text='{req.text}' type={'personal' if ttl == 60 else 'global'}")
-                    async for frame in smooth_stream(cached_reply):
-                        yield frame
-                    yield "data: [DONE]\n\n"
-                    return
-            except Exception as e:
-                ai_core_logger.warning(f"Redis read error: {e}")
+            # Emergency responses are never cached: the alert tool must run each time.
+            if not emergency_request:
+                try:
+                    cached_reply = await redis_client.get(cache_key)
+                    if cached_reply:
+                        ai_core_logger.info(f"ai_cache_hit text='{req.text}' type={'personal' if ttl == 60 else 'global'}")
+                        async for frame in smooth_stream(cached_reply):
+                            yield frame
+                        yield "data: [DONE]\n\n"
+                        return
+                except Exception as e:
+                    ai_core_logger.warning(f"Redis read error: {e}")
 
             # Cache Miss: Stream from Gemini
             ai_core_logger.info(f"ai_cache_miss text='{req.text}'")
@@ -187,7 +200,7 @@ async def ai_core_endpoint(
                 
                 yield "data: [DONE]\n\n"
                 
-                if full_response.strip():
+                if full_response.strip() and not emergency_request:
                     try:
                         await redis_client.setex(cache_key, ttl, full_response.strip())
                     except Exception as e:
@@ -199,18 +212,19 @@ async def ai_core_endpoint(
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     # 2. STANDARD JSON RESPONSE WITH CACHE
-    try:
-        cached_reply = await redis_client.get(cache_key)
-        if cached_reply:
-            ai_core_logger.info(f"ai_cache_hit text='{req.text}' type={'personal' if ttl == 60 else 'global'}")
-            return {
-                "reply": cached_reply,
-                "resolved": True,
-                "language": "en",
-                "sources": []
-            }
-    except Exception as e:
-        ai_core_logger.warning(f"Redis read error: {e}")
+    if not emergency_request:
+        try:
+            cached_reply = await redis_client.get(cache_key)
+            if cached_reply:
+                ai_core_logger.info(f"ai_cache_hit text='{req.text}' type={'personal' if ttl == 60 else 'global'}")
+                return {
+                    "reply": cached_reply,
+                    "resolved": True,
+                    "language": "en",
+                    "sources": []
+                }
+        except Exception as e:
+            ai_core_logger.warning(f"Redis read error: {e}")
 
     ai_core_logger.info(f"ai_cache_miss text='{req.text}'")
     response_data = await get_ai_response(
@@ -220,7 +234,7 @@ async def ai_core_endpoint(
         db=db,
     )
     
-    if response_data.get("resolved"):
+    if response_data.get("resolved") and not emergency_request:
         try:
             await redis_client.setex(cache_key, ttl, response_data["reply"])
         except Exception as e:

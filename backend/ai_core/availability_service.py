@@ -11,9 +11,6 @@ from app.core.hospital_schedule import (
     WORKING_SLOTS,
 )
 
-
-
-
 async def get_doctor_availability(
     doctor_id: UUID,
     appointment_date: date,

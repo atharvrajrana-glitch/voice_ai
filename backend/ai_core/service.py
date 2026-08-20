@@ -35,7 +35,7 @@ SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS = 60
 MODEL_REQUEST_TIMEOUT_SECONDS = 60
 logger = logging.getLogger(__name__)
 _conversation_history: dict[UUID, list[types.Content]] = {}
-
+SHORT_CONFIRMATION_WORDS = {"yes", "no", "yep", "nope", "sure", "ok", "cancel", "yeah"}
 
 class VoiceResponseSchema(BaseModel):
     reply: str = Field(description="Short conversational response for TTS, max 2 sentences.")
@@ -67,6 +67,18 @@ async def _get_ai_response(
     if not patient_text or not patient_text.strip():
         return {"reply": "I didn't catch that. Could you say it again?", "resolved": False, "language": "unknown", "sources": []}
 
+    clean_text = patient_text.strip().lower()
+    is_short_word = clean_text in SHORT_CONFIRMATION_WORDS
+    
+    if not is_short_word and not session_id:
+        cached = await get_cached_response(clean_text) 
+        if cached:
+            logger.info("ai_cache_hit text='%s'", clean_text)
+            return cached
+    else:
+        logger.info("ai_cache_bypass text='%s' reason='active_session_or_short_word'", clean_text)
+
+    logger.info("ai_cache_miss text='%s'", clean_text)
     context = ToolContext(db=db, session_id=session_id, patient_id=patient_id, user_text=patient_text)
     messages = list(_conversation_history.get(session_id, [])) if session_id else []
     messages.append(types.Content(role="user", parts=[types.Part.from_text(text=patient_text)]))
@@ -159,12 +171,16 @@ async def _get_ai_response(
             _conversation_history[session_id] = messages[-MAX_HISTORY_CONTENTS:]
             
         # 3. Bypass JSON parsing completely and wrap the plain text directly
-        return {
+        final_response ={
             "reply": raw,
             "resolved": True,
             "language": "en", 
             "sources": sources
         }
+        if not is_short_word and not session_id:
+            await set_cached_response(clean_text, final_response)
+            
+        return final_response
 
 def _parse_response(raw: str, sources: list[str]) -> dict:
     try:
