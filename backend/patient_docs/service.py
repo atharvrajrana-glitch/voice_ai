@@ -11,13 +11,15 @@ Output: {"reply": str, "resolved": bool, "language_code": str,
 import asyncio
 import json
 import os
-from google import genai
-from google.genai import types
+from dotenv import load_dotenv
+from groq import Groq
 from .system_prompt import PATIENT_DOC_SYSTEM_PROMPT
 from .retrieval import retrieve_relevant_chunks
 
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-MODEL = "gemini-3.5-flash"
+load_dotenv()
+
+client = Groq(api_key=os.environ.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY"))
+MODEL = "openai/gpt-oss-20b"
 
 NOT_FOUND_REPLY = (
     "I couldn't find that information in your uploaded document. "
@@ -27,14 +29,13 @@ ERROR_REPLY = "Sorry, I had trouble reading your document just now. Please try a
 
 
 def _generate_document_content(user_content: str):
-    """Run the synchronous Gemini SDK call in a worker thread."""
-    return client.models.generate_content(
+    """Run the synchronous Groq SDK call in a worker thread."""
+    return client.chat.completions.create(
         model=MODEL,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=PATIENT_DOC_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-        ),
+        messages=[
+            {"role": "user", "content": user_content}
+        ],
+        temperature=0,
     )
 
 
@@ -51,6 +52,7 @@ async def answer_from_document(question: str, session_id: str) -> dict:
         f"[Document: {c['document']}, Page {c['page']}]\n{c['text']}" for c in chunks
     )
     user_content = (
+        f"{PATIENT_DOC_SYSTEM_PROMPT}\n\n"
         f"Retrieved excerpts from the patient's uploaded document:\n"
         f"----------------\n{context_text}\n----------------\n\n"
         f"Patient question:\n{question}"
@@ -58,8 +60,8 @@ async def answer_from_document(question: str, session_id: str) -> dict:
 
     response = await asyncio.to_thread(_generate_document_content, user_content)
 
-    raw = (response.text or "").strip()
-    print(f"[patient_docs] raw Gemini response: {raw!r}")
+    raw = (response.choices[0].message.content or "").strip()
+    print(f"[patient_docs] raw Groq response: {raw!r}")
 
     try:
         data = json.loads(raw)

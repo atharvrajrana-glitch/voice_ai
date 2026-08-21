@@ -2,21 +2,27 @@
 Module 2 backend — the AI core, exposed as an API.
 
 Run with:
-    uvicorn main:app --reload --port 8080
+    uvicorn backend.main:app --reload --port 8080
 """
+
+import os
+import sys
+
+# CRITICAL: Add backend and workspace root to sys.path FIRST
+# This allows all imports (ai_core, app, patient_docs, etc) to work
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+workspace_root = os.path.dirname(backend_dir)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+if workspace_root not in sys.path:
+    sys.path.insert(0, workspace_root)
 
 import asyncio
 import json
 import logging
-import os
 import re
-import sys
 from typing import Optional
 from uuid import UUID
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
 from dotenv import load_dotenv
 
@@ -48,6 +54,7 @@ from app.core.database import AsyncSessionLocal, get_db
 from patient_docs.ingest import ingest_pdf
 from patient_docs.service import answer_from_document
 from routers.sessions import router as sessions_router
+from RAG.ingest import ingest_documents
 
 app = FastAPI(title="MedClear AI Core")
 
@@ -60,7 +67,43 @@ app.add_middleware(
 )
 
 # Initialize Redis client
-redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
+
+@app.on_event("startup")
+async def startup_event():
+    """Run database migrations and ingest hospital documents on startup."""
+    try:
+        # Run database migrations
+        ai_core_logger.info("Running database migrations...")
+        import subprocess
+        import os
+        
+        # Get the backend directory
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Run alembic migrations
+        result = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            cwd=backend_dir,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            ai_core_logger.info("Database migrations completed successfully.")
+        else:
+            ai_core_logger.warning(f"Migration output: {result.stderr}")
+    except Exception as e:
+        ai_core_logger.warning(f"Failed to run migrations: {e}")
+        # Don't fail startup if migrations fail
+    
+    try:
+        ai_core_logger.info("Starting RAG document ingestion...")
+        await ingest_documents()
+        ai_core_logger.info("RAG document ingestion completed successfully.")
+    except Exception as e:
+        ai_core_logger.error(f"Failed to ingest RAG documents: {e}")
+        # Don't fail startup if ingestion fails - system can still work without RAG
 
 class QueryRequest(BaseModel):
     text: str

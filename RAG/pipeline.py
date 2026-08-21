@@ -1,21 +1,24 @@
 import asyncio
 
 from .vector_store import search_documents
-from google import genai
+from groq import Groq
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
+client = Groq(
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
 
 def _generate_content(prompt: str):
-    return client.models.generate_content(
-        model="gemini-3.5-flash",
-        contents=prompt,
+    return client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0,
     )
 
 
@@ -64,7 +67,7 @@ Patient Question:
     response = await asyncio.to_thread(_generate_content, prompt)
 
     return {
-        "reply": response.text.strip(),
+        "reply": response.choices[0].message.content.strip(),
         "sources": [
             item["source"]
             for item in metadata

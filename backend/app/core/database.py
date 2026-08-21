@@ -1,13 +1,20 @@
 import os 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, configure_mappers
 from app.core.config import settings
 from dotenv import load_dotenv
 
 load_dotenv()
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
 class Base(DeclarativeBase):
     pass
+
+# Import app package to register all models via app.__init__.py
+import app  # noqa: F401
+
+# Explicitly configure mappers after all models are imported
+configure_mappers()
 
 DATABASE_URL 
 engine = create_async_engine(

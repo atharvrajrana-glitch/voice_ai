@@ -46,3 +46,41 @@ async def send_twilio_sms(body: str) -> bool:
     except Exception as e:
         print(f"🔥 [DEBUG] Python Error inside Twilio function: {str(e)}")
         return False
+
+
+async def send_twilio_sms_to_patient(body: str, phone_number: str) -> bool:
+    """Sends SMS to patient's phone number and returns True if successful."""
+    if not all((TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER)):
+        print("[ERROR] Twilio SMS is not configured. Set all TWILIO_* variables in .env.")
+        return False
+
+    if not phone_number:
+        print("[ERROR] No phone number provided for patient SMS.")
+        return False
+
+    print(f"🚀 [DEBUG] Sending emergency SMS to {phone_number}...")
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+    
+    credentials = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
+    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+    headers = {"Authorization": f"Basic {encoded_credentials}"}
+    
+    payload = {
+        "To": phone_number,
+        "From": TWILIO_PHONE_NUMBER,
+        "Body": body
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=payload) as response:
+                if response.status in (200, 201):
+                    print(f"✅ [DEBUG] Emergency SMS sent successfully to {phone_number}!")
+                    return True
+                else:
+                    error_text = await response.text()
+                    print(f"❌ [DEBUG] Twilio API Error {response.status}: {error_text}")
+                    return False
+    except Exception as e:
+        print(f"🔥 [DEBUG] Python Error sending patient SMS: {str(e)}")
+        return False

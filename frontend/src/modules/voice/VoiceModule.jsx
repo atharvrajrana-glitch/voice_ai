@@ -158,7 +158,7 @@ export default function VoiceModule({ patientName = "" }) {
 
           // --- NEW: Conversation End Detector ---
           // Checks if the AI included a farewell phrase in its final response
-          const isClosingStatement = /(goodbye|have a (wonderful|great|good) day|bye\b|reach out if you need|take care)/i.test(fullSentence);
+          const isClosingStatement = /(goodbye|have a (wonderful|great|good) day|bye\b|reach out if you need|take care|thank you|thanks for|appreciate|welcome)/i.test(fullSentence);
           
           if (isClosingStatement) {
              setPhase("idle");          // Power down the microphone

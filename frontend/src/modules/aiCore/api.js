@@ -1,5 +1,5 @@
-const AI_CORE_URL = "http://localhost:8080/api/ai-core";
-const API_BASE_URL = "http://localhost:8080";
+const AI_CORE_URL = `${import.meta.env.VITE_API_URL || "http://localhost:8080"}/api/ai-core`;
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 export async function askAICore(text, { documentMode = false } = {}, onChunk) {
   const headers = { "Content-Type": "application/json" };

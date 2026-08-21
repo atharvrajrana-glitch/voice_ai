@@ -1,28 +1,29 @@
-"""Gemini tool declarations and trusted in-process tool dispatch."""
+"""Groq tool declarations and trusted in-process tool dispatch."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, time, datetime, timezone
 from typing import Any
 from uuid import UUID
 import asyncio  
-from google.genai import types
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from RAG.retrieval import retrieve_hospital_context
 from ai_core.availability_service import create_appointment, get_doctor_availability
-from ai_core.doctor_service import get_all_doctors, get_doctors_by_department, get_doctors_by_specialization 
+from ai_core.doctor_service import get_all_doctors, get_doctors_by_department, get_doctors_by_specialization, get_doctors_by_name 
 from patient_docs.service import answer_from_document
 from ai_core.notification import send_twilio_sms
+from app.models.patient import Patient
+from sqlalchemy import select
         
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class ToolContext:
-    """Trusted data derived from the HTTP request, never Gemini arguments."""
+    """Trusted data derived from the HTTP request, never Groq arguments."""
 
     db: AsyncSession
     session_id: UUID | None
@@ -40,39 +41,44 @@ class PendingBooking:
 _pending_bookings: dict[UUID, PendingBooking] = {}
 
 
-def _declaration(name: str, description: str, properties: dict, required: list[str] = None) -> types.FunctionDeclaration:
-    """Create a Gemini FunctionDeclaration for a tool."""
-    schema_props={}
-    for k , v in properties.items():
-        prop_args = {"type": v.get("type","string").upper()}
-        if "description" in v :
-            prop_args["description"] = v["description"]
+def _groq_tool(name: str, description: str, properties: dict, required: list[str] = None) -> dict:
+    """Create a Groq tool definition."""
+    schema_props = {}
+    for k, v in properties.items():
+        prop_def = {"type": v.get("type", "string")}
+        if "description" in v:
+            prop_def["description"] = v["description"]
         if "enum" in v:
-            prop_args["enum"] = v["enum"]
+            prop_def["enum"] = v["enum"]
         if "format" in v:
-            prop_args["format"] = v["format"]
-        schema_props[k] = types.Schema(**prop_args)
-    return types.FunctionDeclaration(
-        name=name,
-        description=description,
-        parameters=types.Schema(
-            type="OBJECT",
-            properties=schema_props,
-            required=required or []
-        )
-    )
+            prop_def["format"] = v["format"]
+        schema_props[k] = prop_def
+    
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": schema_props,
+                "required": required or []
+            }
+        }
+    }
 
-def get_gemini_tools() -> list[types.Tool]:
-    """Returns the consolidated, highly-optimized list of tools."""
-    declarations = [
-        _declaration(
+def get_groq_tools() -> list[dict]:
+    """Returns the consolidated, highly-optimized list of tools for Groq."""
+    today = datetime.now(timezone.utc).date()
+    tools = [
+        _groq_tool(
             "search_hospital", 
             "Search hospital policies, facilities, billing, insurance, pharmacy, departments, or visiting hours. Do not use for patient-specific data.", 
             {"question": {"type": "string"}}, 
             ["question"]
         ),
         # 1. CONSOLIDATED: Appointments Lookup
-        _declaration(
+        _groq_tool(
             "get_patient_appointments",
             "Get authenticated patient appointments. Use filter='upcoming' for next scheduled appointment, or filter='all' for complete history. Never accept a patient ID.",
             {
@@ -84,37 +90,41 @@ def get_gemini_tools() -> list[types.Tool]:
             },
             ["filter"]
         ),
-        _declaration(
+        _groq_tool(
             "find_doctors", 
-            "Find doctors by department or specialization.", 
-            {"department": {"type": "string"}, "specialization": {"type": "string"}}
+            "Find doctors by department, specialization, or doctor name. Provide one of: department, specialization, or query.", 
+            {
+                "department": {"type": "string", "description": "Department name (e.g., Cardiology)"},
+                "specialization": {"type": "string", "description": "Doctor specialty (e.g., cardiologist)"},
+                "query": {"type": "string", "description": "Doctor's full name or partial name (e.g., Rajesh Sharma)"}
+            }
         ),
         # 2. CONSOLIDATED: Appointment Booking Workflow
-        _declaration(
+        _groq_tool(
             "manage_appointment",
             "Manage booking process. Use action='check' to check slots on a date, or action='book' to finalize an appointment after user confirms the exact time.",
             {
                 "action": {"type": "string", "enum": ["check", "book"]},
                 "doctor_id": {"type": "string", "description": "Doctor UUID"},
-                "appointment_date": {"type": "string", "format": "date", "description": "YYYY-MM-DD"},
+                "appointment_date": {"type": "string", "format": "date", "description": f"Date in YYYY-MM-DD format (today is {today.isoformat()}; use future dates only)"},
                 "appointment_time": {"type": "string", "description": "HH:MM (required only if action is 'book')"}
             },
             ["action", "doctor_id", "appointment_date"]
         ),
-        _declaration(
+        _groq_tool(
             "patient_document_qa", 
             "Answer a question about the authenticated patient's uploaded document. Never accept a patient ID or document content.", 
             {"question": {"type": "string"}}, 
             ["question"]
         ),
-        _declaration(
+        _groq_tool(
             "trigger_emergency_alert",
             "REQUIRED for emergencies: call this tool before replying whenever the signed-in patient reports chest pain, heart attack, stroke, severe bleeding, severe breathing difficulty, unconsciousness, or any emergency. Do not ask a question first and do not provide a medical assessment before calling it.",
             {"symptom_description": {"type": "string", "description": "A brief summary of what the patient said."}},
             ["symptom_description"]
         ),
     ]
-    return [types.Tool(function_declarations=declarations)]
+    return tools
 
 def _needs_session(context: ToolContext) -> dict[str, Any] | None:
     if context.session_id is None or context.patient_id is None:
@@ -140,10 +150,18 @@ async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) ->
         elif name == "find_doctors":
             department = str(args.get("department") or "").strip()
             specialization = str(args.get("specialization") or "").strip()
+            query = str(args.get("query") or "").strip()
+            
             if department:
                 doctors = await get_doctors_by_department(department, context.db)
             elif specialization:
                 doctors = await get_doctors_by_specialization(specialization, context.db)
+            elif query:
+                # Try searching by name first
+                doctors = await get_doctors_by_name(query, context.db)
+                # If no exact name match, try by specialization
+                if not doctors:
+                    doctors = await get_doctors_by_specialization(query, context.db)
             else:
                 doctors = await get_all_doctors(context.db)
             result = {"ok": True, "doctors": [_doctor_data(doctor) for doctor in doctors]}
@@ -207,6 +225,7 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
     if name == "check_appointment_availability" or (name == "manage_appointment" and action == "check"):
         doctor_id = UUID(str(args["doctor_id"]))
         appointment_date = date.fromisoformat(str(args["appointment_date"]))
+        logger.info("TOOL_CHECK_AVAILABILITY: doctor_id=%s date=%s user_text='%s'", doctor_id, appointment_date.isoformat(), context.user_text)
         availability = await get_doctor_availability(doctor_id, appointment_date, context.db)
         if availability is None:
             return {"ok": False, "error": "Doctor not found."}
@@ -219,26 +238,73 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
         }
 
     if name == "book_appointment" or (name == "manage_appointment" and action == "book"):
-        doctor_id = UUID(str(args["doctor_id"]))
-        appointment_date = date.fromisoformat(str(args["appointment_date"]))
-        appointment_time = time.fromisoformat(str(args["appointment_time"]))
-        requested = PendingBooking(doctor_id, appointment_date, appointment_time)
+        # Check if this is a confirmation call (no parameters provided, but we have pending booking)
+        has_doctor_id = "doctor_id" in args and args["doctor_id"]
+        has_date = "appointment_date" in args and args["appointment_date"]
+        has_time = "appointment_time" in args and args["appointment_time"]
+        
+        logger.info(
+            "TOOL_BOOK_APPOINTMENT: user_text='%s' is_conf=%s pending_exists=%s has_params=(doc=%s,date=%s,time=%s) args_keys=%s",
+            context.user_text,
+            _is_confirmation(context.user_text),
+            context.session_id in _pending_bookings,
+            has_doctor_id, has_date, has_time,
+            list(args.keys())
+        )
+        
+        # If confirmation is in user text and we have a pending booking, use it
+        if _is_confirmation(context.user_text) and context.session_id in _pending_bookings and not (has_doctor_id and has_date and has_time):
+            pending = _pending_bookings[context.session_id]
+            doctor_id = pending.doctor_id
+            appointment_date = pending.appointment_date
+            appointment_time = pending.appointment_time
+            logger.info("✓ CONFIRMATION_BOOKING using pending booking doctor_id=%s date=%s time=%s", doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"))
+        else:
+            # First call with parameters - validate and store
+            if not has_doctor_id or not has_date:
+                return {
+                    "ok": False,
+                    "error": "I could not understand the appointment details. Please provide doctor ID and appointment date.",
+                }
+            if not has_time:
+                return {
+                    "ok": False,
+                    "error": "I could not understand the appointment time. Please provide the time.",
+                }
+            
+            doctor_id = UUID(str(args["doctor_id"]))
+            appointment_date = date.fromisoformat(str(args["appointment_date"]))
+            appointment_time = time.fromisoformat(str(args["appointment_time"]))
+            requested = PendingBooking(doctor_id, appointment_date, appointment_time)
+            
+            logger.info("FIRST_BOOKING_CALL: doctor_id=%s date=%s time=%s user_text='%s'", doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"), context.user_text)
+            
+            # Check if we have a DIFFERENT pending booking - don't overwrite unless user is confirming a NEW booking
+            if context.session_id in _pending_bookings and not _is_confirmation(context.user_text):
+                pending = _pending_bookings[context.session_id]
+                logger.warning("NEW_BOOKING_ATTEMPT while pending exists: old_date=%s new_date=%s", pending.appointment_date.isoformat(), appointment_date.isoformat())
+                # Clear the old pending booking and start fresh
+                _pending_bookings.pop(context.session_id, None)
 
-        if _pending_bookings.get(context.session_id) != requested or not _is_confirmation(context.user_text):
-            _pending_bookings[context.session_id] = requested
-            return {
-                "ok": False,
-                "requires_confirmation": True,
-                "date": appointment_date.isoformat(),
-                "time": appointment_time.isoformat(timespec="minutes"),
-                "instruction": "Ask the patient to explicitly confirm these exact details. Do not say it is booked.",
-            }
+            if not _is_confirmation(context.user_text):
+                # First call - require confirmation
+                _pending_bookings[context.session_id] = requested
+                return {
+                    "ok": False,
+                    "requires_confirmation": True,
+                    "doctor_id": str(doctor_id),
+                    "appointment_date": appointment_date.isoformat(),
+                    "appointment_time": appointment_time.isoformat(timespec="minutes"),
+                    "next_step": "When the patient explicitly confirms, call manage_appointment action='book' with these exact IDs and times",
+                }
 
+        # Confirmed booking - create the appointment
         appointment = await create_appointment(
             context.patient_id, doctor_id, appointment_date, appointment_time, context.db
         )
         await context.db.refresh(appointment, attribute_names=["doctor"])
         _pending_bookings.pop(context.session_id, None)
+        logger.info("BOOKING_CONFIRMED: doctor_id=%s date=%s time=%s appointment_id=%s", doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"), appointment.id)
         return {
             "ok": True,
             "booked": True,
@@ -259,22 +325,22 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
             "source": answer.get("source"),
         }
     if name == "trigger_emergency_alert":
-        symptom_description = str(args.get("symptom_description") or "Emergency alert requested")
-        logger.critical(
-            "EMERGENCY_ALERT_TRIGGERED patient_id=%s symptom=%s",
-            context.patient_id,
-            symptom_description,
-        )
+        current_patient = context.patient_id if context.patient_id else "GUEST_USER"
+        logger.critical(f"EMERGENCY ALERT! Patient: {current_patient} | Symptom: {args.get('symptom_description')}")
+        
+        
         success = await send_twilio_sms("sms_appointment_reminders")
+        
         if success:
             return {
                 "ok": True,
                 "alert_sent": True,
-                "instruction": "Tell the user: 'I have immediately sent an emergency alert to the hospital. Please call 112 or go to the nearest emergency room right away.'",
+                "instruction": "Tell the user: 'I have immediately sent an emergency alert to the hospital. Please call 108 or go to the nearest emergency room right away.'"
             }
-        return {
-            "ok": False,
-            "alert_sent": False,
-            "error": "The emergency SMS could not be sent.",
-            "instruction": "Tell the patient to call 112 or go to the nearest emergency room immediately.",
-        }
+        else:
+            return {
+                "ok": False,
+                "alert_sent": False,
+                "instruction": "Tell the user: 'My system failed to contact the hospital automatically. This is a critical emergency. You must manually call 108 or go to the emergency room immediately.'"
+            }
+

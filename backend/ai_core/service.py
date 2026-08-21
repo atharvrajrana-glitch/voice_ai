@@ -1,4 +1,4 @@
-"""Session-aware Gemini orchestration for hospital information and live tools."""
+"""Session-aware Groq orchestration for hospital information and live tools."""
 
 import asyncio
 import json
@@ -9,24 +9,24 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 from fastapi import Depends, Header, HTTPException
-from google import genai
-from google.genai import types
+from dotenv import load_dotenv
+from groq import Groq
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.database import AsyncSessionLocal, get_db
+from app.core.database import AsyncSessionLocal, get_db  # noqa: import before relative path setup
 from app.models.appointment import Appointment
 from app.models.patient import Patient
 from app.models.patient_session import PatientSession
 from .system_prompt import SYSTEM_PROMPT
-from .tool_registry import ToolContext, execute_tool, get_gemini_tools
+from .tool_registry import ToolContext, execute_tool, get_groq_tools
 
-
+load_dotenv()
 
 logger = logging.getLogger(__name__)
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-MODEL = "gemini-3.5-flash"
+client = Groq(api_key=os.environ.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY"))
+MODEL = "openai/gpt-oss-20b"
 FALLBACK_REPLY = "Sorry, I wasn't able to work out an answer to that. Could you try asking again?"
 MAX_TOOL_LOOPS = 10
 MAX_HISTORY_CONTENTS = 20
@@ -34,7 +34,7 @@ SESSION_DURATION_HOURS = 1
 SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS = 60
 MODEL_REQUEST_TIMEOUT_SECONDS = 60
 logger = logging.getLogger(__name__)
-_conversation_history: dict[UUID, list[types.Content]] = {}
+_conversation_history: dict[UUID, list[dict]] = {}
 SHORT_CONFIRMATION_WORDS = {"yes", "no", "yep", "nope", "sure", "ok", "cancel", "yeah"}
 
 class VoiceResponseSchema(BaseModel):
@@ -81,67 +81,69 @@ async def _get_ai_response(
     logger.info("ai_cache_miss text='%s'", clean_text)
     context = ToolContext(db=db, session_id=session_id, patient_id=patient_id, user_text=patient_text)
     messages = list(_conversation_history.get(session_id, [])) if session_id else []
-    messages.append(types.Content(role="user", parts=[types.Part.from_text(text=patient_text)]))
+    messages.append({"role": "user", "content": patient_text})
     sources: list[str] = []
 
-    available_tools = get_gemini_tools()
+    available_tools = get_groq_tools()
 
     for loop_number in range(1, MAX_TOOL_LOOPS + 1):
-        gemini_started_timer = perf_counter()
+        groq_started_timer = perf_counter()
 
-        # Tools active on loop 1, deactivated on loop 2 for final voice synthesis
-        current_tools = available_tools if loop_number == 1 else None
-
-        # ULTRA-FAST CONFIG: Removed response_schema and thinking_config
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=current_tools,
-            temperature=0,          # Low temp for fast, deterministic routing
-            max_output_tokens=200,    # Cap output for short voice replies
-        )
+        # Tools are available on all loops to handle tool-calling workflows
+        current_tools = available_tools
 
         try:
             response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=MODEL,
-                    contents=messages,
-                    config=config,
+                asyncio.to_thread(
+                    lambda: client.chat.completions.create(
+                        model=MODEL,
+                        messages=messages,
+                        tools=current_tools,
+                        tool_choice="auto",
+                        temperature=0,
+                        max_tokens=200,
+                        system=SYSTEM_PROMPT,
+                    )
                 ),
-                timeout=MODEL_REQUEST_TIMEOUT_SECONDS, # Make sure this is 15, not 60!
+                timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
             )
             # --- DEBUG INSPECTION LOG ---
             logger.info("ai_debug payload_inspection loop=%d total_messages=%d", loop_number, len(messages))
             for idx, msg in enumerate(messages):
-                role = getattr(msg, "role", "unknown")
-                text_parts = [p.text for p in (msg.parts or []) if hasattr(p, "text") and p.text]
-                tool_parts = [p.function_call.name for p in (msg.parts or []) if hasattr(p, "function_call") and p.function_call]
-                logger.info("ai_debug_msg [%d] role=%s text='%s' tools=%s", idx, role, " ".join(text_parts)[:100], tool_parts)
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")[:100]
+                logger.info("ai_debug_msg [%d] role=%s content='%s'", idx, role, content)
             # -----------------------------
         except Exception:
-            logger.exception("ai_core Gemini request failed model=%s loop=%d", MODEL, loop_number)  
+            logger.exception("ai_core Groq request failed model=%s loop=%d", MODEL, loop_number)  
             return {"reply": FALLBACK_REPLY, "resolved": False, "language": "en", "sources": sources}
         
         finally:
             logger.info(
-                "ai_timing gemini_call_end request_id=%s loop=%d step_total_ms=%.1f",
+                "ai_timing groq_call_end request_id=%s loop=%d step_total_ms=%.1f",
                 request_id,
                 loop_number,
-                (perf_counter() - gemini_started_timer) * 1000,
+                (perf_counter() - groq_started_timer) * 1000,
             )
 
-        candidate = response.candidates[0] if response and response.candidates else None
-        content = candidate.content if candidate and candidate.content else None
-        if content is None:
+        if not response or not response.choices:
             return {"reply": FALLBACK_REPLY, "resolved": False, "language": "en", "sources": sources}
 
-        # 1. Look for function calls FIRST to avoid the SDK warning
-        calls = [part for part in (content.parts or []) if part.function_call]
-        if calls:
-            messages.append(content)
-            responses: list[types.Part] = []
-            for part in calls:
-                name = part.function_call.name
-                args = dict(part.function_call.args or {})
+        choice = response.choices[0]
+        message = choice.message
+
+        # 1. Look for tool calls FIRST
+        if message.tool_calls:
+            messages.append({"role": "assistant", "content": message.content or ""})
+            
+            for tool_call in message.tool_calls:
+                name = tool_call.function.name
+                # Parse arguments from JSON string
+                try:
+                    args = json.loads(tool_call.function.arguments)
+                except:
+                    args = {}
+                
                 tool_started_timer = perf_counter()
                 try:
                     result = await execute_tool(name, args, context)
@@ -156,22 +158,27 @@ async def _get_ai_response(
                 for source in result.get("sources", []):
                     if source not in sources:
                         sources.append(source)
-                responses.append(types.Part.from_function_response(name=name, response={"result": result}))
-            messages.append(types.Content(role="tool", parts=responses))
+                
+                # Append tool result as a user message with string content
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool '{name}' result: {json.dumps(result)}"
+                })
+            
             continue
 
-        # 2. Extract text SAFELY (ignores function_call parts)
-        raw = "".join([part.text for part in (content.parts or []) if not part.function_call]).strip()
+        # 2. Extract text response
+        raw = (message.content or "").strip()
         
         if not raw:
             return {"reply": FALLBACK_REPLY, "resolved": False, "language": "en", "sources": sources}
 
-        messages.append(content)
+        messages.append({"role": "assistant", "content": raw})
         if session_id:
             _conversation_history[session_id] = messages[-MAX_HISTORY_CONTENTS:]
             
-        # 3. Bypass JSON parsing completely and wrap the plain text directly
-        final_response ={
+        # 3. Return response
+        final_response = {
             "reply": raw,
             "resolved": True,
             "language": "en", 
@@ -298,7 +305,7 @@ async def get_upcoming_patient_appointment(patient_id: UUID, db: AsyncSession) -
 
 async def stream_ai_response(patient_text: str, session_id: UUID | None, patient_id: UUID | None, db):
     """
-    Yields text chunks as they are generated by Gemini.
+    Yields text chunks as they are generated by Groq.
     Handles tool execution seamlessly between chunks.
     """
     if not patient_text or not patient_text.strip():
@@ -307,80 +314,95 @@ async def stream_ai_response(patient_text: str, session_id: UUID | None, patient
 
     context = ToolContext(db=db, session_id=session_id, patient_id=patient_id, user_text=patient_text)
     messages = list(_conversation_history.get(session_id, [])) if session_id else []
-    messages.append(types.Content(role="user", parts=[types.Part.from_text(text=patient_text)]))
+    messages.append({"role": "user", "content": patient_text})
     
-    available_tools = get_gemini_tools()
+    available_tools = get_groq_tools()
     full_response_text = ""
 
     for loop_number in range(1, MAX_TOOL_LOOPS + 1):
-        # Tools are only available on the first loop
-        current_tools = available_tools if loop_number == 1 else None
+        # Tools are available on all loops to handle tool-calling workflows
+        current_tools = available_tools
         
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=current_tools,
-            temperature=0.2,
-            max_output_tokens=250,
-        )
-
         try:
-            # Use generate_content_stream instead of 
             logger.info("ai_debug stream_payload_inspection loop=%d total_messages=%d", loop_number, len(messages))
             for idx, msg in enumerate(messages):
-                role = getattr(msg, "role", "unknown")
-                text_parts = [p.text for p in (msg.parts or []) if hasattr(p, "text") and p.text]
-                tool_parts = [p.function_call.name for p in (msg.parts or []) if hasattr(p, "function_call") and p.function_call]
-                logger.info("ai_debug_stream_msg [%d] role=%s text='%s' tools=%s", idx, role, " ".join(text_parts)[:100], tool_parts)
-            # -------------------------------------------
-            response_stream = await client.aio.models.generate_content_stream(
-                model=MODEL,
-                contents=messages,
-                config=config,
-            )
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")[:100] if isinstance(msg.get("content"), str) else ""
+                logger.info("ai_debug_stream_msg [%d] role=%s content='%s'", idx, role, content)
+            
+            response = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
+                    tools=current_tools,
+                    tool_choice="auto",
+                    temperature=0.2,
+                    max_tokens=250,
+                    stream=True,
+                )
             
             tool_calls = []
-            generated_content = types.Content(role="model", parts=[])
+            assistant_message = {"role": "assistant", "content": ""}
 
-            async for chunk in response_stream:
-                if not chunk.candidates or not chunk.candidates[0].content.parts:
-                    continue
-                    
-                for part in chunk.candidates[0].content.parts:
-                    if part.function_call:
-                        tool_calls.append(part.function_call)
-                        generated_content.parts.append(part)
-                    elif part.text:
-                        text_chunk = part.text
+            for chunk in response:
+                try:
+                    if chunk.choices[0].delta.content:
+                        text_chunk = chunk.choices[0].delta.content
                         full_response_text += text_chunk
-                        generated_content.parts.append(part)
-                        # Yield the chunk directly to the FastAPI stream!
+                        assistant_message["content"] += text_chunk
                         yield text_chunk
+                        
+                    if chunk.choices[0].delta.tool_calls:
+                        tool_calls.extend(chunk.choices[0].delta.tool_calls)
+                except (AttributeError, KeyError):
+                    # Handle malformed chunks gracefully
+                    continue
+                except Exception as chunk_err:
+                    logger.warning("Chunk processing error (continuing): %s", chunk_err)
+                    continue
 
         except Exception as e:
-            logger.exception("ai_core Gemini streaming failed")
+            logger.exception("ai_core Groq streaming failed")
             yield "Sorry, I am having trouble connecting to the hospital network right now."
             return
 
         # If tools were called, execute them and run the next loop
         if tool_calls:
-            messages.append(generated_content)
-            responses = []
+            messages.append(assistant_message)
             
-            for call in tool_calls:
-                name = call.name
-                args = dict(call.args or {})
+            # Build tool results as strings instead of dicts
+            for tool_call in tool_calls:
+                name = tool_call.function.name
+                try:
+                    args_str = tool_call.function.arguments
+                    logger.info("TOOL_CALL_RAW: name=%s args_raw=%s", name, args_str[:100] if args_str else "")
+                    args = json.loads(args_str) if args_str else {}
+                except json.JSONDecodeError as json_err:
+                    logger.warning("TOOL_ARGS_JSON_ERROR: name=%s error=%s raw=%s", name, str(json_err), args_str[:100] if args_str else "")
+                    # For emergency alert, try to salvage it
+                    if name == "trigger_emergency_alert":
+                        args = {"symptom_description": "Emergency alert triggered - patient in distress"}
+                    else:
+                        args = {}
+                except Exception as parse_err:
+                    logger.warning("TOOL_ARGS_PARSE_ERROR: name=%s error=%s", name, str(parse_err))
+                    args = {}
+                
                 try:
                     result = await execute_tool(name, args, context)
                 except Exception as e:
+                    logger.error("TOOL_EXEC_ERROR: name=%s error=%s", name, str(e))
                     result = f"Error executing {name}: {str(e)}"
                 
-                responses.append(types.Part.from_function_response(name=name, response={"result": result}))
+                # Append as a user message with the tool result as a string
+                messages.append({
+                    "role": "user",
+                    "content": f"Tool '{name}' result: {json.dumps(result)}"
+                })
             
-            messages.append(types.Content(role="tool", parts=responses))
             continue # Go to loop 2 to generate the final voice response based on tool data
             
         # If no tools were called, generation is complete.
-        messages.append(generated_content)
+        messages.append(assistant_message)
         if session_id:
             _conversation_history[session_id] = messages[-MAX_HISTORY_CONTENTS:]
         break

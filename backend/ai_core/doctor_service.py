@@ -40,7 +40,23 @@ async def get_doctors_by_specialization(
     result = await db.execute(
         select(Doctor)
         .where(
-            Doctor.specialization.ilike(specialization)
+            Doctor.specialization.ilike(f"%{specialization}%")
+        )
+        .order_by(Doctor.name.asc())
+    )
+
+    return list(result.scalars().all())
+
+
+async def get_doctors_by_name(
+    name: str,
+    db: AsyncSession,
+) -> list[Doctor]:
+    """Search doctors by name (partial match)."""
+    result = await db.execute(
+        select(Doctor)
+        .where(
+            Doctor.name.ilike(f"%{name}%")
         )
         .order_by(Doctor.name.asc())
     )
