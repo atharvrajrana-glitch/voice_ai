@@ -43,9 +43,12 @@ async def answer_from_document(question: str, session_id: str) -> dict:
     if not question or not question.strip():
         return {"reply": "I didn't catch a question.", "resolved": False, "language_code": "en-US", "source": None}
 
+    print(f"[patient_docs] answer_from_document: session_id={session_id} question='{question}'")
     chunks = await retrieve_relevant_chunks(question, session_id)
+    print(f"[patient_docs] retrieved {len(chunks)} chunks")
 
     if not chunks:
+        print(f"[patient_docs] no chunks found, returning NOT_FOUND_REPLY")
         return {"reply": NOT_FOUND_REPLY, "resolved": False, "language_code": "en-US", "source": None}
 
     context_text = "\n\n".join(

@@ -47,6 +47,7 @@ export default function VoiceModule({ patientName = "" }) {
   const keepAliveRef = useRef(null);
   const voicesRef = useRef([]);
   const fileInputRef = useRef(null);
+  const handlePatientTextRef = useRef(null);
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -129,7 +130,7 @@ export default function VoiceModule({ patientName = "" }) {
         setInterim("");
         setTranscriptLog((log) => [...log, { who: "patient", text: finalText.trim() }]);
         recognition.stop();
-        handlePatientText(finalText.trim());
+        handlePatientTextRef.current(finalText.trim());
       }
     };
 
@@ -168,6 +169,7 @@ export default function VoiceModule({ patientName = "" }) {
           }
         };
 
+        console.log("[Voice Debug] uploadStatus:", uploadStatus, "documentMode:", uploadStatus === "done");
         const { reply, resolved, language } = await askAICore(
           heardText,
           { documentMode: uploadStatus === "done" },
@@ -223,9 +225,13 @@ export default function VoiceModule({ patientName = "" }) {
           () => startListening()
         );
       }
-    },
+   },
     [speak, startListening, uploadStatus]
   );
+
+  useEffect(() => {
+    handlePatientTextRef.current = handlePatientText;
+  }, [handlePatientText]);
 
   const startGreeting = () => {
     const firstName = patientName.trim().split(/\s+/)[0];
@@ -246,23 +252,49 @@ export default function VoiceModule({ patientName = "" }) {
     if (!file) return;
 
     const sessionId = localStorage.getItem("medclear_session_id");
-    if (!sessionId) return;
+    if (!sessionId) {
+      console.error("[Voice Debug] No session ID found!");
+      setUploadMessage("You must sign in first to upload documents");
+      return;
+    }
 
     setUploadedFile(file);
     setUploadStatus("uploading");
     setUploadMessage("");
+    console.log("[Voice Debug] Starting upload for file:", file.name, "size:", file.size, "sessionId:", sessionId);
 
     try {
       const result = await uploadPatientDocument(file, sessionId);
-      setUploadStatus(result.success ? "done" : "error");
-      setUploadMessage(result.success ? "" : "Unable to process this PDF. Please try another file.");
+      console.log("[Voice Debug] Upload API response:", JSON.stringify(result));
+      
+      if (!result) {
+        console.error("[Voice Debug] Upload returned null/undefined");
+        setUploadStatus("error");
+        setUploadMessage("Upload failed - no response from server");
+        return;
+      }
+      
+      const success = result.success === true;  // Explicit true check
+      console.log("[Voice Debug] Upload success:", success, "result.success:", result.success, "result.chunks_added:", result.chunks_added);
+      
+      if (success) {
+        setUploadStatus("done");
+        setUploadMessage("");
+        console.log("[Voice Debug] ✓ Upload successful! Chunks added:", result.chunks_added);
+      } else {
+        setUploadStatus("error");
+        setUploadMessage(result.message || "Unable to process this PDF. Please try another file.");
+        console.error("[Voice Debug] Upload failed:", result.message);
+      }
     } catch (error) {
+      console.error("[Voice Debug] Upload exception:", error);
       setUploadStatus("error");
       setUploadMessage("Unable to upload this PDF. Please try again.");
     }
   };
 
   const clearDocument = () => {
+    console.log("[Voice Debug] clearDocument called");
     setUploadedFile(null);
     setUploadStatus(null);
     setUploadMessage("");
@@ -281,6 +313,14 @@ export default function VoiceModule({ patientName = "" }) {
     event.preventDefault();
     const question = textQuestion.trim();
     if (!question || phase === "thinking") return;
+    
+    console.log("[Voice Debug] submitTextQuestion:", {
+      question,
+      uploadStatus,
+      documentMode: uploadStatus === "done",
+      phase
+    });
+    
     stopAll();
     setTextQuestion("");
     setTranscriptLog((log) => [...log, { who: "patient", text: question }]);

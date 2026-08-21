@@ -166,24 +166,48 @@ async def ai_core_endpoint(
 
     session_id = session.id if session else None
     patient_id = session.patient_id if session else None
+    
+    # Force document_mode ON if documents exist for this session
+    # This handles the case where frontend uploadStatus tracking fails
+    documents_available = False
+    if session_id:
+        try:
+            # Quick check: do we have any chunks for this session?
+            from patient_docs.vector_store import collection
+            results = collection.get(
+                where={"session_id": str(session_id)},
+                limit=1
+            )
+            documents_available = len(results.get("ids", [])) > 0
+            if documents_available:
+                ai_core_logger.info(f"DOCUMENTS_DETECTED: session_id={session_id}, forcing document_mode=True")
+        except Exception as e:
+            ai_core_logger.warning(f"Could not check for documents: {e}")
+    
+    # Override document_mode if documents exist
+    document_mode = req.document_mode or documents_available
+    
+    ai_core_logger.info(f"REQUEST: document_mode={document_mode} (requested={req.document_mode}, detected={documents_available}) stream={req.stream} session_id={session_id} text='{req.text[:60]}'")
 
-    # Handle attached PDF document questions directly
-    if req.document_mode and session:
+    # Handle attached PDF document questions FIRST
+    if document_mode and session:
+        ai_core_logger.info(f"DOCUMENT_MODE_ACTIVE: retrieving from document for session_id={session.id}")
         try:
             answer = await answer_from_document(req.text, str(session.id))
             reply_text = answer.get("reply", "Sorry, I had trouble reading your document just now. Please try again.")
             resolved = bool(answer.get("resolved", False))
-            language = answer.get("language") or answer.get("language_code", "English")
+            language = answer.get("language") or answer.get("language_code", "en")
             sources = [answer["source"]] if answer.get("source") else []
-        except Exception:
+            ai_core_logger.info(f"DOCUMENT_ANSWER_SUCCESS: reply='{reply_text[:60]}' resolved={resolved}")
+        except Exception as e:
+            ai_core_logger.exception(f"DOCUMENT_MODE_ERROR: {e}")
             reply_text = "Sorry, I had trouble reading your document just now. Please try again."
             resolved = False
-            language = "English"
+            language = "en"
             sources = []
 
         if req.stream:
             async def doc_event_generator():
-                # STRUCTURED JSON: Prevents the browser from stripping spaces
                 payload = json.dumps({"text": reply_text})
                 yield f"data: {payload}\n\n"
                 yield "data: [DONE]\n\n"
@@ -287,8 +311,11 @@ async def ai_core_endpoint(
 
 @app.post("/api/patient-doc/upload")
 async def patient_doc_upload_endpoint(file: UploadFile = File(...), session_id: str = Form(...)):
+    ai_core_logger.info(f"UPLOAD_START: file={file.filename} session_id={session_id} size={len(await file.read()) if file.file else 0}")
     file_bytes = await file.read()
-    return await ingest_pdf(file_bytes, file.filename, session_id)
+    result = await ingest_pdf(file_bytes, file.filename, session_id)
+    ai_core_logger.info(f"UPLOAD_RESULT: {result}")
+    return result
 
 @app.post("/api/patient-doc/ask")
 async def patient_doc_ask_endpoint(req: PatientDocQARequest):

@@ -2,6 +2,7 @@ const AI_CORE_URL = `${import.meta.env.VITE_API_URL || "http://localhost:8080"}/
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 export async function askAICore(text, { documentMode = false } = {}, onChunk) {
+  console.log("[API Debug] askAICore called with:", { text: text.slice(0, 30), documentMode });
   const headers = { "Content-Type": "application/json" };
   const sessionId = localStorage.getItem("medclear_session_id");
   if (sessionId) headers["X-Session-ID"] = sessionId;

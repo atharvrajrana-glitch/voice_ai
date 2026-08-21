@@ -69,16 +69,38 @@ async def add_chunk(
 
 
 def _query_collection(query_embedding, session_id: str, n_results: int):
-    return collection.query(
-        query_embeddings=[query_embedding],
-        n_results=n_results,
-        where={"session_id": session_id},  # the actual isolation boundary
-    )
+    """Query the collection with proper session filtering."""
+    # Ensure session_id is a string for consistent matching
+    session_id_str = str(session_id).strip()
+    print(f"[vector_store] _query_collection: filtering by session_id='{session_id_str}'")
+    
+    try:
+        result = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+            where={"session_id": {"$eq": session_id_str}},  # Use explicit equality operator
+        )
+        return result
+    except Exception as e:
+        print(f"[vector_store] query with $eq failed: {e}, trying simple equality")
+        # Fallback to simple equality if the operator syntax fails
+        result = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+            where={"session_id": session_id_str},
+        )
+        return result
 
 
 async def search_chunks(query: str, session_id: str, n_results: int = 3):
+    print(f"[vector_store] search_chunks: session_id={session_id} query='{query[:50]}' n_results={n_results}")
     query_embedding = await create_embedding(query)
-    return await asyncio.to_thread(_query_collection, query_embedding, session_id, n_results)
+    result = await asyncio.to_thread(_query_collection, query_embedding, session_id, n_results)
+    documents = result.get("documents", [[]])[0] if result else []
+    metadatas = result.get("metadatas", [[]])[0] if result else []
+    distances = result.get("distances", [[]])[0] if result else []
+    print(f"[vector_store] found {len(documents)} documents, distances: {distances}")
+    return result
 
 
 def delete_session(session_id: str):
