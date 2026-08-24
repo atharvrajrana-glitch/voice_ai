@@ -189,7 +189,6 @@ async def ai_core_endpoint(
     
     ai_core_logger.info(f"REQUEST: document_mode={document_mode} (requested={req.document_mode}, detected={documents_available}) stream={req.stream} session_id={session_id} text='{req.text[:60]}'")
 
-    # Handle attached PDF document questions FIRST
     if document_mode and session:
         ai_core_logger.info(f"DOCUMENT_MODE_ACTIVE: retrieving from document for session_id={session.id}")
         try:
@@ -201,19 +200,22 @@ async def ai_core_endpoint(
             ai_core_logger.info(f"DOCUMENT_ANSWER_SUCCESS: reply='{reply_text[:60]}' resolved={resolved}")
         except Exception as e:
             ai_core_logger.exception(f"DOCUMENT_MODE_ERROR: {e}")
-            reply_text = "Sorry, I had trouble reading your document just now. Please try again."
+            reply_text = None
             resolved = False
             language = "en"
             sources = []
 
-        if req.stream:
-            async def doc_event_generator():
-                payload = json.dumps({"text": reply_text})
-                yield f"data: {payload}\n\n"
-                yield "data: [DONE]\n\n"
-            return StreamingResponse(doc_event_generator(), media_type="text/event-stream")
+        if resolved:
+            if req.stream:
+                async def doc_event_generator():
+                    payload = json.dumps({"text": reply_text})
+                    yield f"data: {payload}\n\n"
+                    yield "data: [DONE]\n\n"
+                return StreamingResponse(doc_event_generator(), media_type="text/event-stream")
 
-        return {"reply": reply_text, "resolved": resolved, "language": language, "sources": sources}
+            return {"reply": reply_text, "resolved": resolved, "language": language, "sources": sources}
+
+        ai_core_logger.info("DOCUMENT_ANSWER_NOT_FOUND: falling back to general assistant flow")
 
     emergency_request = is_emergency_request(req.text)
     cache_key, ttl = get_cache_info(
@@ -311,10 +313,9 @@ async def ai_core_endpoint(
 
 @app.post("/api/patient-doc/upload")
 async def patient_doc_upload_endpoint(file: UploadFile = File(...), session_id: str = Form(...)):
-    ai_core_logger.info(f"UPLOAD_START: file={file.filename} session_id={session_id} size={len(await file.read()) if file.file else 0}")
     file_bytes = await file.read()
+    ai_core_logger.info(f"UPLOAD_START: file={file.filename} session_id={session_id} size={len(file_bytes)}")
     result = await ingest_pdf(file_bytes, file.filename, session_id)
-    ai_core_logger.info(f"UPLOAD_RESULT: {result}")
     return result
 
 @app.post("/api/patient-doc/ask")
