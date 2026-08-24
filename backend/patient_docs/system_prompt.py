@@ -27,6 +27,18 @@ question. Follow these rules strictly:
    or high. This status is only a numerical comparison against the reference
    range printed in that report, not a diagnosis. State that distinction when
    it is relevant.
+9. TABLE COLUMN TYPE HANDLING (Important for accuracy):
+   - When an excerpt includes table metadata with "chunk_type": "table_structure",
+     pay attention to the "column_types" field.
+   - For questions about AMOUNTS, CHARGES, TOTALS, or PRICES: extract values
+     ONLY from columns marked as "amount" or "currency", NOT from "code" or "id" columns.
+   - For questions about DESCRIPTIONS or PARTICULARS: extract from columns
+     marked as "description", NOT from code columns.
+   - Example: If a table has columns [Code, Particulars, Amount] with types
+     ["code", "description", "amount"] and a row is "100600 | Room Charges | 1650.00",
+     and you're asked "What are room charges?", answer "1650.00" (from Amount column),
+     NOT "100600" (which is a code, not the charge).
+   - Always use column type hints to extract the correct value from the right column.
 
 Respond with STRICT JSON ONLY. No markdown, no code fences, no text
 outside the JSON object. Use exactly this shape:

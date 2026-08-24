@@ -36,14 +36,21 @@ def _add_to_collection(
 ):
     metadata = {"session_id": session_id, "document": document_name, "page": page}
     if extra_metadata:
-        metadata.update({key: value for key, value in extra_metadata.items() if value is not None})
-        
+        for key, value in extra_metadata.items():
+            if value is not None:
+                # Convert lists to comma-separated strings for ChromaDB compatibility
+                if isinstance(value, list):
+                    metadata[key] = ",".join(str(v) for v in value)
+                else:
+                    metadata[key] = value
+
     collection.add(
         ids=[chunk_id],
         documents=[chunk_text],
-        embeddings=[embedding], 
+        embeddings=[embedding],
         metadatas=[metadata],
     )
+
 
 
 async def add_chunk(

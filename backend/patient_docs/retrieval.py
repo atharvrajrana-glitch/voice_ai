@@ -42,6 +42,7 @@ async def retrieve_relevant_chunks(question: str, session_id: str, n_results: in
         metadatas = results.get("metadatas", [[]])[0]
         
         # If no results with normalized query, try with original (fallback)
+                # If no results with normalized query, try with original (fallback)
         if not documents:
             print(f"[patient_docs] no results with normalized query, trying original")
             results = await search_chunks(question, session_id, n_results=n_results)
@@ -56,9 +57,15 @@ async def retrieve_relevant_chunks(question: str, session_id: str, n_results: in
                 "test_name": meta.get("test_name"),
                 "document_type": meta.get("document_type"),
                 "status": meta.get("status"),
+                "chunk_type": meta.get("chunk_type"),
+                "headers": meta.get("headers"),
+                "column_types": meta.get("column_types"),
+                "table_number": meta.get("table_number"),
             }
             for doc, meta in zip(documents, metadatas)
         ]
+
     except Exception as e:
         print(f"[patient_docs] retrieval failed: {e}")
         return []
+
