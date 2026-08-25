@@ -43,6 +43,7 @@ export default function VoiceModule({ patientName = "" }) {
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadStatus, setUploadStatus] = useState(null); 
   const [uploadMessage, setUploadMessage] = useState("");
+  const [bookingNotification, setBookingNotification] = useState(null);
   const recognitionRef = useRef(null);
   const keepAliveRef = useRef(null);
   const voicesRef = useRef([]);
@@ -78,7 +79,7 @@ export default function VoiceModule({ patientName = "" }) {
     window.speechSynthesis.resume(); 
     
     const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 0.98;
+    utter.rate = 1.30;
     utter.pitch = 1.0;
     utter.lang = locale || "en-US";
 
@@ -125,16 +126,24 @@ export default function VoiceModule({ patientName = "" }) {
         if (event.results[i].isFinal) finalText += t;
         else interimText += t;
       }
-      setInterim(interimText);
       if (finalText.trim()) {
+        finalHandled = true;
         setInterim("");
         setTranscriptLog((log) => [...log, { who: "patient", text: finalText.trim() }]);
         recognition.stop();
         handlePatientTextRef.current(finalText.trim());
       }
-    };
+     };
+
+    let finalHandled = false;
 
     recognition.onerror = () => setPhase("idle");
+    recognition.onend = () => {
+      if (!finalHandled) {
+        setInterim("");
+        setPhase("idle");
+      }
+    };
     recognitionRef.current = recognition;
     setPhase("listening");
     setInterim("");
@@ -170,7 +179,7 @@ export default function VoiceModule({ patientName = "" }) {
         };
 
         console.log("[Voice Debug] uploadStatus:", uploadStatus, "documentMode:", uploadStatus === "done");
-        const { reply, resolved, language } = await askAICore(
+        const { reply, resolved, language, isBookingSuccess } = await askAICore(
           heardText,
           { documentMode: uploadStatus === "done" },
           (newWord) => {
@@ -205,6 +214,25 @@ export default function VoiceModule({ patientName = "" }) {
              }
           }
         );
+
+        // Show booking notification if appointment was booked
+        if (isBookingSuccess) {
+          const doctorMatch = fullSentence.match(/(?:Dr\.?\s+)?([A-Z][a-z]+\s+[A-Z][a-z]+)/);
+          const doctorName = doctorMatch ? doctorMatch[0] : "Your doctor";
+          const dateMatch = fullSentence.match(/(\w+\s+\d{1,2}(?:,?\s*\d{4})?)/);
+          const dateStr = dateMatch ? dateMatch[0] : "Your appointment";
+          const timeMatch = fullSentence.match(/(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)/);
+          const timeStr = timeMatch ? timeMatch[0] : "";
+          
+          setBookingNotification({
+            show: true,
+            doctor: doctorName,
+            date: dateStr,
+            time: timeStr
+          });
+          
+          setTimeout(() => setBookingNotification(null), 5000);
+        }
 
         if (accumulatedTTSBuffer.trim()) {
            speak(accumulatedTTSBuffer.trim(), "ai", () => {
@@ -345,7 +373,33 @@ export default function VoiceModule({ patientName = "" }) {
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes statusPulse { 0%, 100% { opacity: .45; transform: scale(.9); } 50% { opacity: 1; transform: scale(1); } }
+        @keyframes slideIn { from { transform: translateX(400px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
       `}</style>
+
+      {/* BOOKING NOTIFICATION */}
+      {bookingNotification?.show && (
+        <div style={{
+          position: "fixed",
+          top: "20px",
+          right: "20px",
+          background: "#1F6F64",
+          color: "#FFFFFF",
+          padding: "16px 24px",
+          borderRadius: "8px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+          zIndex: 1000,
+          animation: "slideIn 0.3s ease-out",
+          maxWidth: "300px"
+        }}>
+          <div style={{ fontSize: "16px", fontWeight: "600", marginBottom: "8px" }}>
+            ✓ Appointment Confirmed
+          </div>
+          <div style={{ fontSize: "14px", opacity: 0.95, lineHeight: "1.5" }}>
+            <div>{bookingNotification.doctor}</div>
+            <div>{bookingNotification.date} at {bookingNotification.time}</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ width: "100%", maxWidth: "640px", textAlign: "center", margin: "4px 0 28px", padding: "25px 24px", boxSizing: "border-box", border: "1px solid #E7E2D7", borderRadius: "20px", background: "linear-gradient(135deg, #FCFBF7, #F1F5F0)" }}>
         <div style={{ marginBottom: "7px", color: "#1F6F64", fontSize: "11px", fontWeight: 700, letterSpacing: ".11em", textTransform: "uppercase" }}>MedClear</div>
@@ -374,14 +428,14 @@ export default function VoiceModule({ patientName = "" }) {
             </div>
           )}
 
-          <div style={{ width: "100%", maxWidth: "440px", background: "#FFFFFF", border: "1px solid #E9E4D8", borderRadius: "12px", padding: "18px 20px", minHeight: "140px" }}>
+          <div style={{ width: "100%", maxWidth: "440px", background: "#FFFFFF", border: "1px solid #E9E4D8", borderRadius: "12px", padding: "18px 20px", minHeight: "140px", maxHeight: "320px", display: "flex", flexDirection: "column" }}>
             <div style={{ fontSize: "12px", letterSpacing: "0.06em", textTransform: "uppercase", color: "#9A9384", marginBottom: "10px", fontWeight: 500 }}>
               Transcript
             </div>
             {transcriptLog.length === 0 ? (
               <div style={{ fontSize: "14px", color: "#B4AE9E" }}>Nothing yet — ask a question below or use the microphone.</div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto", overflowX: "hidden", flex: 1, paddingRight: "8px" }}>
                 {transcriptLog.map((entry, i) => (
                   <div key={i} style={{ display: "flex", gap: "10px", alignItems: "flex-start" }}>
                     <span style={{ fontSize: "11px", fontWeight: 600, color: entry.who === "ai" ? "#1F6F64" : "#8A6B3E", minWidth: "58px", marginTop: "2px" }}>

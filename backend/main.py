@@ -115,23 +115,29 @@ class PatientDocQARequest(BaseModel):
     session_id: str
 
 
-def get_cache_info(user_text: str, patient_id: str | None, session_id: str | None):
-    """Analyzes text to return the correct Redis key and TTL."""
+def get_cache_info(user_text: str, patient_id: str | None, session_id: str | None) -> tuple[str | None, int]:
+    """Analyzes text to return the correct Redis key and TTL, or (None, 0) to skip caching entirely."""
     clean_text = re.sub(r'[^\w\s]', '', user_text.lower()).strip()
-    
-    personal_keywords = {"my", "i", "me", "mine", "appointment", "report", "bill", "cancel", "book"}
     words = set(clean_text.split())
-    
+
+    # Never cache short/ambiguous replies — these are almost always mid-conversation
+    # (confirmations, doctor names, dates, single-word answers) and their correct
+    # response depends entirely on prior conversation context, not the text alone.
+    if len(words) <= 3:
+        return None, 0
+
+    personal_keywords = {"my", "i", "me", "mine", "appointment", "report", "bill", "cancel", "book"}
     is_personal = bool(words.intersection(personal_keywords))
     identifier = patient_id or session_id or "anonymous"
-    
+
     if is_personal:
+        # Personal/contextual questions must be scoped per-user, never shared globally
         cache_key = f"medclear_cache:user:{identifier}:{clean_text}"
         ttl = 60
     else:
         cache_key = f"medclear_cache:global:{clean_text}"
         ttl = 86400
-        
+
     return cache_key, ttl
 
 
@@ -239,7 +245,7 @@ async def ai_core_endpoint(
                         await asyncio.sleep(0.02) 
 
             # Emergency responses are never cached: the alert tool must run each time.
-            if not emergency_request:
+            if not emergency_request and cache_key:
                 try:
                     cached_reply = await redis_client.get(cache_key)
                     if cached_reply:
@@ -269,7 +275,7 @@ async def ai_core_endpoint(
                 
                 yield "data: [DONE]\n\n"
                 
-                if full_response.strip() and not emergency_request:
+                if full_response.strip() and not emergency_request and cache_key:
                     try:
                         await redis_client.setex(cache_key, ttl, full_response.strip())
                     except Exception as e:

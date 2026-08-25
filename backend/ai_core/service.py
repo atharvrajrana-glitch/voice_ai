@@ -29,7 +29,7 @@ client = Groq(api_key=os.environ.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY"
 MODEL = "openai/gpt-oss-20b"
 FALLBACK_REPLY = "Sorry, I wasn't able to work out an answer to that. Could you try asking again?"
 MAX_TOOL_LOOPS = 10
-MAX_HISTORY_CONTENTS = 20
+MAX_HISTORY_CONTENTS = 5
 SESSION_DURATION_HOURS = 1
 SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS = 60
 MODEL_REQUEST_TIMEOUT_SECONDS = 60
@@ -318,7 +318,7 @@ async def stream_ai_response(patient_text: str, session_id: UUID | None, patient
     
     available_tools = get_groq_tools()
     full_response_text = ""
-
+    executed_tool_calls: dict[str, Any] = {}
     for loop_number in range(1, MAX_TOOL_LOOPS + 1):
         # Tools are available on all loops to handle tool-calling workflows
         current_tools = available_tools
@@ -387,12 +387,19 @@ async def stream_ai_response(patient_text: str, session_id: UUID | None, patient
                     logger.warning("TOOL_ARGS_PARSE_ERROR: name=%s error=%s", name, str(parse_err))
                     args = {}
                 
-                try:
-                    result = await execute_tool(name, args, context)
-                except Exception as e:
-                    logger.error("TOOL_EXEC_ERROR: name=%s error=%s", name, str(e))
-                    result = f"Error executing {name}: {str(e)}"
-                
+                call_signature = f"{name}:{args_str}"
+
+                if call_signature in executed_tool_calls:
+                    logger.warning("DUPLICATE_TOOL_CALL_SKIPPED: name=%s args=%s", name, args_str[:100] if args_str else "")
+                    result = executed_tool_calls[call_signature]
+                else:
+                    try:
+                        result = await execute_tool(name, args, context)
+                    except Exception as e:
+                        logger.error("TOOL_EXEC_ERROR: name=%s error=%s", name, str(e))
+                        result = f"Error executing {name}: {str(e)}"
+                    executed_tool_calls[call_signature] = result
+
                 # Append as a user message with the tool result as a string
                 messages.append({
                     "role": "user",

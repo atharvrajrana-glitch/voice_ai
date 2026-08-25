@@ -1,6 +1,13 @@
 const AI_CORE_URL = `${import.meta.env.VITE_API_URL || "http://localhost:8080"}/api/ai-core`;
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
+export function detectBookingSuccess(aiResponse) {
+  // Check if the AI response indicates a successful appointment booking
+  const bookingKeywords = ["appointment is confirmed", "appointment confirmed", "booked", "your appointment", "appointment booked"];
+  const lowerReply = (aiResponse || "").toLowerCase();
+  return bookingKeywords.some(keyword => lowerReply.includes(keyword));
+}
+
 export async function askAICore(text, { documentMode = false } = {}, onChunk) {
   console.log("[API Debug] askAICore called with:", { text: text.slice(0, 30), documentMode });
   const headers = { "Content-Type": "application/json" };
@@ -45,7 +52,12 @@ export async function askAICore(text, { documentMode = false } = {}, onChunk) {
         const rawData = line.replace(/^data:\s*/, "");
 
         if (rawData === "[DONE]") {
-          return { reply: fullReply.trim(), resolved: true, language: "en" };
+          return { 
+            reply: fullReply.trim(), 
+            resolved: true, 
+            language: "en",
+            isBookingSuccess: detectBookingSuccess(fullReply)
+          };
         }
         if (rawData.startsWith("[ERROR]")) {
           throw new Error(rawData);
@@ -70,7 +82,12 @@ export async function askAICore(text, { documentMode = false } = {}, onChunk) {
     }
   }
 
-  return { reply: fullReply.trim(), resolved: true, language: "en" };
+  return { 
+    reply: fullReply.trim(), 
+    resolved: true, 
+    language: "en",
+    isBookingSuccess: detectBookingSuccess(fullReply)
+  };
 }
 
 export async function createSession(phone) {

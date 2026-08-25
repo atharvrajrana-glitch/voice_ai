@@ -45,7 +45,9 @@ def _groq_tool(name: str, description: str, properties: dict, required: list[str
     """Create a Groq tool definition."""
     schema_props = {}
     for k, v in properties.items():
-        prop_def = {"type": v.get("type", "string")}
+        base_type = v.get("type", "string")
+        # Allow a field to accept null (e.g. optional params the model omits by passing null)
+        prop_def = {"type": [base_type, "null"] if v.get("nullable") else base_type}
         if "description" in v:
             prop_def["description"] = v["description"]
         if "enum" in v:
@@ -107,7 +109,7 @@ def get_groq_tools() -> list[dict]:
                 "action": {"type": "string", "enum": ["check", "book"]},
                 "doctor_id": {"type": "string", "description": "Doctor UUID"},
                 "appointment_date": {"type": "string", "format": "date", "description": f"Date in YYYY-MM-DD format (today is {today.isoformat()}; use future dates only)"},
-                "appointment_time": {"type": "string", "description": "HH:MM (required only if action is 'book')"}
+                "appointment_time": {"type": "string", "nullable": True, "description": "HH:MM (required only if action is 'book'); pass null when action is 'check'"}
             },
             ["action", "doctor_id", "appointment_date"]
         ),
@@ -137,8 +139,13 @@ def _doctor_data(doctor: Any) -> dict[str, str]:
 
 
 def _is_confirmation(text: str) -> bool:
-    return " ".join(text.lower().strip().split()).strip(".!?,") in {"yes", "yes please", "confirm", "confirm it", "book it", "yes book it", "go ahead", "please proceed"}
-
+    normalized = " ".join(text.lower().strip().split()).strip(".!?,")
+    exact_matches = {"yes", "yes please", "confirm", "confirm it", "book it", "yes book it", "go ahead", "please proceed", "yeah", "yep", "sure", "ok", "okay"}
+    if normalized in exact_matches:
+        return True
+    # Handle speech-recognition noise/extra words: "yes alphabet", "yeah sure book it", etc.
+    starting_words = ("yes", "yeah", "yep", "sure", "confirm", "book it", "go ahead", "okay", "ok")
+    return normalized.startswith(starting_words)
 
 async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     """Run only allow-listed tools and return minimal JSON-safe values."""
@@ -151,19 +158,21 @@ async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) ->
             department = str(args.get("department") or "").strip()
             specialization = str(args.get("specialization") or "").strip()
             query = str(args.get("query") or "").strip()
-            
+
             if department:
                 doctors = await get_doctors_by_department(department, context.db)
-            elif specialization:
-                doctors = await get_doctors_by_specialization(specialization, context.db)
             elif query:
-                # Try searching by name first
+                # If query is provided, search by name first (prioritize exact doctor name)
                 doctors = await get_doctors_by_name(query, context.db)
-                # If no exact name match, try by specialization
-                if not doctors:
-                    doctors = await get_doctors_by_specialization(query, context.db)
+                # If no match by name, try specialization from query
+                if not doctors and specialization:
+                    doctors = await get_doctors_by_specialization(specialization, context.db)
+            elif specialization:
+                # Only if no query provided, search by specialization
+                doctors = await get_doctors_by_specialization(specialization, context.db)
             else:
                 doctors = await get_all_doctors(context.db)
+
             result = {"ok": True, "doctors": [_doctor_data(doctor) for doctor in doctors]}
         else:
             session_error = _needs_session(context)
@@ -295,7 +304,6 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
                     "doctor_id": str(doctor_id),
                     "appointment_date": appointment_date.isoformat(),
                     "appointment_time": appointment_time.isoformat(timespec="minutes"),
-                    "next_step": "When the patient explicitly confirms, call manage_appointment action='book' with these exact IDs and times",
                 }
 
         # Confirmed booking - create the appointment
@@ -308,9 +316,11 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
         return {
             "ok": True,
             "booked": True,
+            "is_booking_success": True,
             "doctor_name": appointment.doctor.name,
             "date": appointment_date.isoformat(),
             "time": appointment_time.isoformat(timespec="minutes"),
+            "appointment_id": str(appointment.id),  
             "status": appointment.status,
         }
 
