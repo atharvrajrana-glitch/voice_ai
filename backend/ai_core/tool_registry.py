@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from RAG.retrieval import retrieve_hospital_context
 from ai_core.availability_service import create_appointment, get_doctor_availability
 from ai_core.doctor_service import get_all_doctors, get_doctors_by_department, get_doctors_by_specialization, get_doctors_by_name 
+from ai_core.lab_report_service import get_latest_lab_report
 from patient_docs.service import answer_from_document
 from ai_core.notification import send_twilio_sms
 from app.models.patient import Patient
@@ -125,6 +126,11 @@ def get_groq_tools() -> list[dict]:
             {"symptom_description": {"type": "string", "description": "A brief summary of what the patient said."}},
             ["symptom_description"]
         ),
+        _groq_tool(
+            "check_lab_report",
+            "check whether the authenticated patient's lab report is ready , and get a summary if so. Never accept a patient ID.",
+            {},
+        )
     ]
     return tools
 
@@ -174,6 +180,21 @@ async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) ->
                 doctors = await get_all_doctors(context.db)
 
             result = {"ok": True, "doctors": [_doctor_data(doctor) for doctor in doctors]}
+        elif name =="check_lab_report":
+            session_error = _needs_session(context)
+            if session_error :
+                return session_error
+            
+            report =await get_latest_lab_report(str(context.patient_id), context.db)
+            if not report:
+                result = {"ok":True,"found":False,"message":"No lab report found for this patient"}
+            else:
+                result = {
+                    "ok":True,
+                    "found":True,
+                    "status":report.report_status,
+                    "summary": report.report_summary if report.report_status =="ready" else None,
+                }
         else:
             session_error = _needs_session(context)
             if session_error:

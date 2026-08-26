@@ -16,7 +16,7 @@ export default function App() {
   });
 
   return (
-    <div style={{ background: "#F6F4EE", minHeight: "100vh" }}>
+    <div style={{ background: "#F8F7F4", minHeight: "100vh" }}>
       <SessionManager>
       {(session) => (
       <div style={{ minHeight: "calc(100vh - 65px)", display: "flex" }}>

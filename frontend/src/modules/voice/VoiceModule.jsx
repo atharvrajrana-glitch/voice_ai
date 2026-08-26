@@ -34,6 +34,7 @@ function toSpeechLocale(languageName) {
   return "en-US";
 }
 
+
 export default function VoiceModule({ patientName = "" }) {
   const [phase, setPhase] = useState("idle"); 
   const [transcriptLog, setTranscriptLog] = useState([]);
@@ -49,6 +50,11 @@ export default function VoiceModule({ patientName = "" }) {
   const voicesRef = useRef([]);
   const fileInputRef = useRef(null);
   const handlePatientTextRef = useRef(null);
+  let fullSentence = "";
+  let accumulatedTTSBuffer = "";
+  let hasStartedSpeaking = false;
+  let timeChunksSeen = 0;
+  let timesSuppressed = false;
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -75,6 +81,16 @@ export default function VoiceModule({ patientName = "" }) {
     };
   }, []);
 
+  function toSpokenSummary(text) {
+    // Detect a list of 3+ time values (e.g., "9:00, 9:30, 10:00, 10:30...")
+    const timeListPattern = /(\d{1,2}:\d{2}(?:\s*,\s*\d{1,2}:\d{2}){2,})/;
+    const match = text.match(timeListPattern);
+    if (match) {
+      return text.replace(match[0], "the times shown below");
+    }
+    return text;
+  }
+
   const speak = useCallback((text, who, onDone, locale, skipLog = false) => {
     window.speechSynthesis.resume(); 
     
@@ -93,14 +109,17 @@ export default function VoiceModule({ patientName = "" }) {
 
     utter.onend = () => {
       clearInterval(keepAliveRef.current);
+      stopBargeInListener();
       onDone && onDone();
     };
     utter.onerror = () => {
       clearInterval(keepAliveRef.current);
+      stopBargeInListener();
       onDone && onDone();
     };
-    
+
     setPhase("speaking");
+    startBargeInListener();
     
     if (!skipLog) {
       setTranscriptLog((log) => [...log, { who, text }]);
@@ -149,6 +168,72 @@ export default function VoiceModule({ patientName = "" }) {
     setInterim("");
     recognition.start();
   }, []);
+
+  const bargeInRecognitionRef = useRef(null);
+
+const startBargeInListener = useCallback(() => {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return;
+
+  const bargeRecognition = new SpeechRecognition();
+  bargeRecognition.continuous = false;
+  bargeRecognition.interimResults = true;
+  bargeRecognition.lang = "en-US";
+
+  let triggered = false;
+
+  bargeRecognition.onresult = (event) => {
+    let finalText = "";
+    let interimText = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) finalText += t;
+      else interimText += t;
+    }
+
+    // As soon as we detect ANY meaningful speech, interrupt immediately
+    if (!triggered && (interimText.trim().length > 2 || finalText.trim())) {
+      triggered = true;
+      window.speechSynthesis.cancel();
+      bargeRecognition.stop();
+
+      if (finalText.trim()) {
+        setInterim("");
+        setTranscriptLog((log) => [...log, { who: "patient", text: finalText.trim() }]);
+        handlePatientTextRef.current(finalText.trim());
+      } else {
+        // Got interim speech but not final yet — hand off to the normal listener
+        // to capture the rest of what they're saying
+        setPhase("listening");
+        startListening();
+      }
+    }
+  };
+
+  bargeRecognition.onerror = () => {
+    // Ignore — barge-in listener failing silently is fine, normal flow continues
+  };
+
+  bargeRecognition.onend = () => {
+    // If it ended without triggering, that's normal (assistant finished speaking first)
+  };
+
+  bargeInRecognitionRef.current = bargeRecognition;
+  try {
+    bargeRecognition.start();
+  } catch (e) {
+    // Recognition may already be running elsewhere; ignore
+  }
+}, [startListening]);
+
+const stopBargeInListener = useCallback(() => {
+  if (bargeInRecognitionRef.current) {
+    try {
+      bargeInRecognitionRef.current.abort();
+    } catch (e) {}
+    bargeInRecognitionRef.current = null;
+  }
+}, []);
 
   const handlePatientText = useCallback(
     async (heardText) => {
@@ -200,35 +285,73 @@ export default function VoiceModule({ patientName = "" }) {
 
              accumulatedTTSBuffer += newWord;
              
-             if (/[.,!?]\s*$/.test(accumulatedTTSBuffer)) {
-                 const textToSpeak = accumulatedTTSBuffer.trim();
-                 accumulatedTTSBuffer = ""; 
-                 
-                 if (textToSpeak) {
-                    if (!hasStartedSpeaking) {
-                        setPhase("speaking");
-                        hasStartedSpeaking = true;
+           if (/[.,!?]\s*$/.test(accumulatedTTSBuffer)) {
+                const textToSpeak = accumulatedTTSBuffer.trim();
+                accumulatedTTSBuffer = ""; 
+                
+                if (textToSpeak) {
+                    // Detect if this chunk is primarily a time value (e.g., "09:00," or "10:30 or")
+                    const isMostlyTime = /^(?:or|and)?\s*\d{1,2}:\d{2}\b[\s,.]*$/i.test(textToSpeak);
+
+                    if (isMostlyTime) {
+                        timeChunksSeen += 1;
+                        if (timeChunksSeen <= 2) {
+                            // Speak the first couple of times normally, so it doesn't feel abrupt
+                            if (!hasStartedSpeaking) {
+                                setPhase("speaking");
+                                hasStartedSpeaking = true;
+                            }
+                            speak(textToSpeak, "ai", null, "en-US", true);
+                        } else if (!timesSuppressed) {
+                            // After a couple, announce once and go silent for the rest of the list
+                            timesSuppressed = true;
+                            speak("and more times shown below.", "ai", null, "en-US", true);
+                        }
+                        // else: silently skip — already announced
+                    } else {
+                        // Reset time-tracking once we're past the list (a real sentence chunk)
+                        timeChunksSeen = 0;
+                        timesSuppressed = false;
+                        if (!hasStartedSpeaking) {
+                            setPhase("speaking");
+                            hasStartedSpeaking = true;
+                        }
+                        speak(textToSpeak, "ai", null, "en-US", true);
                     }
-                    speak(textToSpeak, "ai", null, "en-US", true); 
-                 }
-             }
+                }
+            }
           }
         );
 
         // Show booking notification if appointment was booked
         if (isBookingSuccess) {
-          const doctorMatch = fullSentence.match(/(?:Dr\.?\s+)?([A-Z][a-z]+\s+[A-Z][a-z]+)/);
+          // Extract doctor name (e.g., "Dr. Rajesh Sharma" or "DR. RAJESH SHARMA")
+          const doctorMatch = fullSentence.match(/(?:Dr\.?\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/);
           const doctorName = doctorMatch ? doctorMatch[0] : "Your doctor";
-          const dateMatch = fullSentence.match(/(\w+\s+\d{1,2}(?:,?\s*\d{4})?)/);
-          const dateStr = dateMatch ? dateMatch[0] : "Your appointment";
-          const timeMatch = fullSentence.match(/(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?)/);
-          const timeStr = timeMatch ? timeMatch[0] : "";
+          
+          // Extract date (e.g., "August 28" or "August 28, 2026")
+          const monthNames = "January|February|March|April|May|June|July|August|September|October|November|December";
+          const dateMatch = fullSentence.match(new RegExp(`(${monthNames})\\s+(\\d{1,2})(?:,?\\s+(\\d{4}))?`));
+          const dateStr = dateMatch ? `${dateMatch[1]} ${dateMatch[2]}${dateMatch[3] ? ", " + dateMatch[3] : ""}` : "";
+          
+          // Extract time (e.g., "9:00 AM" or "09:00" or "3:00 PM")
+          const timeMatch = fullSentence.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm|a\.m|p\.m)?/i);
+          let timeStr = "";
+          if (timeMatch) {
+            let hour = parseInt(timeMatch[1]);
+            const minute = timeMatch[2];
+            const period = (timeMatch[3] || "").toUpperCase().replace(".", "");
+            
+            // If no AM/PM provided, default to AM
+            const displayPeriod = period ? period : "AM";
+            timeStr = `${hour}:${minute} ${displayPeriod}`;
+          }
           
           setBookingNotification({
             show: true,
             doctor: doctorName,
-            date: dateStr,
-            time: timeStr
+            date: dateStr || "Your appointment date",
+            time: timeStr || "Your appointment time"
           });
           
           setTimeout(() => setBookingNotification(null), 5000);
@@ -332,7 +455,7 @@ export default function VoiceModule({ patientName = "" }) {
   const activityLabel = {
     idle: needsGreeting ? "Tap the microphone to begin" : "Ready when you are",
     greeting: "Starting conversation...",
-    listening: interim ? `Listening: “${interim}”` : "Listening...",
+    listening: interim ? `Listening: "${interim}"` : "Listening...",
     thinking: "Thinking...",
     speaking: "Speaking...",
   }[phase];
@@ -359,7 +482,7 @@ export default function VoiceModule({ patientName = "" }) {
     <div
       style={{
         fontFamily: "'Inter', sans-serif",
-        background: "#F6F4EE",
+        background: "#F8F7F4",
         minHeight: "600px",
         width: "100%",
         display: "flex",
@@ -392,7 +515,7 @@ export default function VoiceModule({ patientName = "" }) {
           maxWidth: "300px"
         }}>
           <div style={{ fontSize: "16px", fontWeight: "600", marginBottom: "8px" }}>
-            ✓ Appointment Confirmed
+            Appointment Confirmed
           </div>
           <div style={{ fontSize: "14px", opacity: 0.95, lineHeight: "1.5" }}>
             <div>{bookingNotification.doctor}</div>

@@ -47,7 +47,7 @@ export default function SessionManager({ children }) {
 
   if (checkingSession) {
     return (
-      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#F6F4EE", fontFamily: "Inter, sans-serif" }}>
+      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#F8F7F4", fontFamily: "Inter, sans-serif" }}>
         <style>{`@keyframes sessionSpin { to { transform: rotate(360deg); } }`}</style>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", color: "#1F6F64", fontSize: "18px", fontWeight: 500 }}>
           <LoaderCircle size={25} strokeWidth={2} style={{ animation: "sessionSpin .9s linear infinite" }} />
@@ -59,7 +59,7 @@ export default function SessionManager({ children }) {
   if (!session) {
     const isSignUp = authMode === "signup";
     return (
-      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "24px", boxSizing: "border-box", background: "#F6F4EE", fontFamily: "Inter, sans-serif" }}>
+      <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "24px", boxSizing: "border-box", background: "#F8F7F4", fontFamily: "Inter, sans-serif" }}>
         <section style={{ width: "100%", maxWidth: "420px", padding: "40px", boxSizing: "border-box", background: "#fff", border: "1px solid #E9E4D8", borderRadius: "20px", boxShadow: "0 16px 42px rgba(31, 51, 44, .08)" }}>
           <div style={{ width: "48px", height: "48px", display: "grid", placeItems: "center", borderRadius: "14px", background: "#DDEDE8", color: "#1F6F64", marginBottom: "24px" }}><Stethoscope size={25} /></div>
           <p style={{ margin: 0, color: "#1F6F64", fontSize: "12px", fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase" }}>MedClear</p>

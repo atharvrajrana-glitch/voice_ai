@@ -15,7 +15,7 @@ class OCRUnavailableError(RuntimeError):
 def _ocr_page(file_bytes: bytes, page_number: int) -> str:
     """Render one PDF page and return text recognized by local Tesseract."""
     try:
-        import fitz  # PyMuPDF
+        import fitz  
         import pytesseract
         from PIL import Image
     except ImportError as error:

@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timezone
 from uuid import UUID
-
+from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,11 @@ async def get_doctor_availability(
     if appointment_date.weekday() not in WORKING_DAYS:
         return doctor, []
 
+    # 2b. No slots for dates that have already fully passed
+    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    if appointment_date < today_ist:
+        return doctor, []
+
     # 3. Get already booked slots
     result = await db.execute(
         select(Appointment.appointment_time)
@@ -48,15 +53,19 @@ async def get_doctor_availability(
         for row in result.all()
     }
 
-    # 4. Remove booked slots
+        # 4. Remove booked slots, and if booking for today, remove slots already in the past
+        # 4. Remove booked slots, and if booking for today, remove slots already in the past (hospital local time)
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    is_today = appointment_date == now_ist.date()
+    current_time_ist = now_ist.time()
+
     available_slots = [
         slot
         for slot in WORKING_SLOTS
         if slot not in booked_slots
+        and not (is_today and slot <= current_time_ist)
     ]
-
     return doctor, available_slots
-
 async def create_appointment(
     patient_id: UUID,
     doctor_id: UUID,
@@ -84,11 +93,20 @@ async def create_appointment(
     # 2. Validate date is not in past
     # --------------------------------
 
-    today = datetime.now(timezone.utc).date()
-
-    if appointment_date < today:
+        # --------------------------------
+    # 2. Validate date and time are not in the past
+    # --------------------------------
+        # --------------------------------
+    # 2. Validate date and time are not in the past (hospital local time)
+    # --------------------------------
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    if appointment_date < now_ist.date():
         raise ValueError(
             "Appointment date cannot be in the past"
+        )
+    if appointment_date == now_ist.date() and appointment_time <= now_ist.time():
+        raise ValueError(
+            "That time has already passed today. Please choose a later time."
         )
 
     # --------------------------------

@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.database import Base
 
 from app.models.doctor import Doctor
+from app.models.lab_report import LabReport
 from app.models.patient import Patient
 from app.models.patient_doctor import PatientDoctor
 from app.models.appointment import Appointment

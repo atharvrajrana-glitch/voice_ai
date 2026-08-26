@@ -19,6 +19,7 @@ from app.core.database import AsyncSessionLocal, get_db  # noqa: import before r
 from app.models.appointment import Appointment
 from app.models.patient import Patient
 from app.models.patient_session import PatientSession
+from ai_core.lab_report_service import get_latest_lab_report
 from .system_prompt import SYSTEM_PROMPT
 from .tool_registry import ToolContext, execute_tool, get_groq_tools
 
