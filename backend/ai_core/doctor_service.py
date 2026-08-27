@@ -32,20 +32,41 @@ async def get_doctors_by_department(
     return list(result.scalars().all())
 
 
+
+
 async def get_doctors_by_specialization(
     specialization: str,
     db: AsyncSession,
 ) -> list[Doctor]:
 
+    cleaned = specialization.strip()
+    # Normalize person-noun forms to field-noun forms: "cardiologist" -> "cardiolog",
+    # "dermatologist" -> "dermatolog", so it substring-matches "Cardiology"/"Dermatology"
+    cleaned = re.sub(r'(ist)$', '', cleaned, flags=re.IGNORECASE)
+    # Handle British spelling variants: "orthopaedic" -> "orthop"
+    cleaned = re.sub(r'(ae|a)?dic$', '', cleaned, flags=re.IGNORECASE)
+
     result = await db.execute(
         select(Doctor)
         .where(
-            Doctor.specialization.ilike(f"%{specialization}%")
+            Doctor.specialization.ilike(f"%{cleaned}%")
         )
         .order_by(Doctor.name.asc())
     )
+    doctors = list(result.scalars().all())
 
-    return list(result.scalars().all())
+    if not doctors and cleaned != specialization:
+        # Fall back to the original raw term in case normalization over-stripped
+        result = await db.execute(
+            select(Doctor)
+            .where(
+                Doctor.specialization.ilike(f"%{specialization}%")
+            )
+            .order_by(Doctor.name.asc())
+        )
+        doctors = list(result.scalars().all())
+
+    return doctors
 
 
 

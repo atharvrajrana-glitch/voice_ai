@@ -98,12 +98,11 @@ async def _get_ai_response(
                 asyncio.to_thread(
                     lambda: client.chat.completions.create(
                         model=MODEL,
-                        messages=messages,
+                        messages=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
                         tools=current_tools,
                         tool_choice="auto",
                         temperature=0,
                         max_tokens=200,
-                        system=SYSTEM_PROMPT,
                     )
                 ),
                 timeout=MODEL_REQUEST_TIMEOUT_SECONDS,
