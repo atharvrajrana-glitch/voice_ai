@@ -341,13 +341,14 @@ body {
 
 .card-hover {
   cursor: pointer;
+  transition: all 0.3s ease;
 }
 
 .card-hover:hover {
   background-color: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.3);
-  box-shadow: 0 20px 25px -5px rgba(168, 85, 247, 0.2);
-  transform: scale(1.05);
+  border-color: rgba(168, 85, 247, 0.4);
+  box-shadow: 0 20px 25px -5px rgba(168, 85, 247, 0.3);
+  transform: translateY(-4px);
 }
 
 /* Dividers */
