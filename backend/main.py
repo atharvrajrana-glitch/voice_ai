@@ -16,7 +16,7 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 if workspace_root not in sys.path:
     sys.path.insert(0, workspace_root)
-
+ 
 import asyncio
 import json
 import logging
@@ -45,6 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
+
 from ai_core.service import (
     _validate_and_refresh_session,
     get_ai_response,
@@ -55,6 +56,12 @@ from patient_docs.ingest import ingest_pdf
 from patient_docs.service import answer_from_document
 from routers.sessions import router as sessions_router
 from RAG.ingest import ingest_documents
+from ai_core.availability_service import mark_past_appointments_done
+
+
+def rich_transcription_postprocess(text: str) -> str:
+    """Simple postprocessing for transcription - can be expanded"""
+    return text.strip() if text else ""
 
 app = FastAPI(title="MedClear AI Core")
 
@@ -71,7 +78,7 @@ redis_client = redis.Redis(host='redis', port=6379, decode_responses=True)
 
 @app.on_event("startup")
 async def startup_event():
-    """Run database migrations and ingest hospital documents on startup."""
+    """Run database migrations, ingest hospital documents, and load transcription model on startup."""
     try:
         # Run database migrations
         ai_core_logger.info("Running database migrations...")
@@ -104,6 +111,17 @@ async def startup_event():
     except Exception as e:
         ai_core_logger.error(f"Failed to ingest RAG documents: {e}")
         # Don't fail startup if ingestion fails - system can still work without RAG
+    
+    try:
+        ai_core_logger.info("Marking past appointments as done...")
+        async with AsyncSessionLocal() as db:
+            count = await mark_past_appointments_done(db)
+            ai_core_logger.info(f"Marked {count} past appointments as done.")
+    except Exception as e:
+        ai_core_logger.warning(f"Failed to mark past appointments: {e}")
+        # Don't fail startup if this fails
+    
+    
 
 class QueryRequest(BaseModel):
     text: str
@@ -338,3 +356,8 @@ async def database_health():
         }
 
 app.include_router(sessions_router)
+
+
+
+        
+

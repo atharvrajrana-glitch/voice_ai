@@ -30,7 +30,7 @@ client = Groq(api_key=os.environ.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY"
 MODEL = "openai/gpt-oss-20b"
 FALLBACK_REPLY = "Sorry, I wasn't able to work out an answer to that. Could you try asking again?"
 MAX_TOOL_LOOPS = 10
-MAX_HISTORY_CONTENTS = 5
+MAX_HISTORY_CONTENTS = 4
 SESSION_DURATION_HOURS = 1
 SESSION_ACTIVITY_UPDATE_INTERVAL_SECONDS = 60
 MODEL_REQUEST_TIMEOUT_SECONDS = 60
@@ -134,6 +134,7 @@ async def _get_ai_response(
 
         # 1. Look for tool calls FIRST
         if message.tool_calls:
+            # Append assistant message (even if empty) to track the tool call in conversation
             messages.append({"role": "assistant", "content": message.content or ""})
             
             for tool_call in message.tool_calls:
@@ -171,7 +172,16 @@ async def _get_ai_response(
         raw = (message.content or "").strip()
         
         if not raw:
-            return {"reply": FALLBACK_REPLY, "resolved": False, "language": "en", "sources": sources}
+            # Check if we've had too many consecutive empty responses
+            empty_count = sum(1 for msg in messages[-6:] if msg.get("role") == "assistant" and not msg.get("content", "").strip())
+            
+            # If we're at the last loop and still no response, return fallback
+            if loop_number >= MAX_TOOL_LOOPS or empty_count >= 3:
+                logger.warning("MAX_TOOL_LOOPS or too many empty responses: session_id=%s user_text='%s' loop=%d empty_count=%d", session_id, patient_text, loop_number, empty_count)
+                return {"reply": FALLBACK_REPLY, "resolved": False, "language": "en", "sources": sources}
+            # Otherwise continue looping to try again
+            logger.info("EMPTY_RESPONSE_CONTINUING: loop=%d session_id=%s empty_count=%d", loop_number, session_id, empty_count)
+            continue
 
         messages.append({"role": "assistant", "content": raw})
         if session_id:
@@ -285,7 +295,7 @@ async def get_current_session(x_session_id: UUID = Header(..., alias="X-Session-
 
 
 async def get_patient_appointments(patient_id: UUID, db: AsyncSession) -> list[Appointment]:
-    result = await db.execute(select(Appointment).options(selectinload(Appointment.doctor)).where(Appointment.patient_id == patient_id).order_by(Appointment.appointment_date, Appointment.appointment_time))
+    result = await db.execute(select(Appointment).options(selectinload(Appointment.doctor)).where(Appointment.patient_id == patient_id, Appointment.status == "scheduled").order_by(Appointment.appointment_date, Appointment.appointment_time))
     return list(result.scalars().all())
 
 
@@ -362,7 +372,7 @@ async def stream_ai_response(patient_text: str, session_id: UUID | None, patient
 
         except Exception as e:
             logger.exception("ai_core Groq streaming failed")
-            yield "Sorry, I am having trouble connecting to the hospital network right now."
+            yield "Sorry, could you say that again? I didn't quite understand."
             return
 
         # If tools were called, execute them and run the next loop
@@ -389,16 +399,24 @@ async def stream_ai_response(patient_text: str, session_id: UUID | None, patient
                 
                 call_signature = f"{name}:{args_str}"
 
+                
+
                 if call_signature in executed_tool_calls:
                     logger.warning("DUPLICATE_TOOL_CALL_SKIPPED: name=%s args=%s", name, args_str[:100] if args_str else "")
-                    result = executed_tool_calls[call_signature]
-                else:
-                    try:
-                        result = await execute_tool(name, args, context)
-                    except Exception as e:
-                        logger.error("TOOL_EXEC_ERROR: name=%s error=%s", name, str(e))
-                        result = f"Error executing {name}: {str(e)}"
-                    executed_tool_calls[call_signature] = result
+                    # Don't re-inject the same result — the model already saw and
+                    # responded to it once. Tell it explicitly to stop repeating instead.
+                    messages.append({
+                        "role": "user",
+                        "content": f"Tool '{name}' result: You already have this information. Do not call this tool again or repeat your previous answer — just wait for the patient's next response."
+                    })
+                    continue
+
+                try:
+                    result = await execute_tool(name, args, context)
+                except Exception as e:
+                    logger.error("TOOL_EXEC_ERROR: name=%s error=%s", name, str(e))
+                    result = f"Error executing {name}: {str(e)}"
+                executed_tool_calls[call_signature] = result
 
                 # Append as a user message with the tool result as a string
                 messages.append({
@@ -407,7 +425,10 @@ async def stream_ai_response(patient_text: str, session_id: UUID | None, patient
                 })
             
             continue # Go to loop 2 to generate the final voice response based on tool data
-            
+        if not assistant_message["content"].strip():
+            logger.warning("EMPTY_MODEL_RESPONSE: session_id=%s user_text='%s'", session_id, patient_text)
+            yield "Sorry, could you say that again?"
+            return
         # If no tools were called, generation is complete.
         messages.append(assistant_message)
         if session_id:

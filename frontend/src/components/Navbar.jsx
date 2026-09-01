@@ -102,58 +102,7 @@ export default function Navbar({ patientName, onSignOut }) {
 
       {/* Right side - Bell, User & Sign Out */}
       <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-        {/* Bell Icon */}
-        <button
-          style={{
-            position: "relative",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "40px",
-            height: "40px",
-            borderRadius: "10px",
-            border: "1px solid rgba(167, 139, 250, 0.2)",
-            background: "rgba(124, 58, 237, 0.1)",
-            color: "#A78BFA",
-            cursor: "pointer",
-            transition: "all 0.3s ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(124, 58, 237, 0.2)";
-            e.currentTarget.style.borderColor = "rgba(167, 139, 250, 0.4)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(124, 58, 237, 0.1)";
-            e.currentTarget.style.borderColor = "rgba(167, 139, 250, 0.2)";
-          }}
-          title="Notifications"
-        >
-          <Bell size={18} />
-          {notifications > 0 && (
-            <span
-              style={{
-                position: "absolute",
-                top: "-4px",
-                right: "-4px",
-                width: "20px",
-                height: "20px",
-                borderRadius: "50%",
-                background: "#EF4444",
-                color: "#fff",
-                fontSize: "10px",
-                fontWeight: "bold",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "2px solid rgba(26, 22, 34, 0.9)",
-              }}
-            >
-              {notifications}
-            </span>
-          )}
-        </button>
-
-        {/* User Profile */}
+            {/* User Profile */}
         {patientName && (
           <div
             style={{

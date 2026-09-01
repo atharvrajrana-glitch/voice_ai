@@ -99,6 +99,7 @@ export async function createSession(phone) {
   if (!response.ok) throw new Error("Could not create a patient session.");
   const data = await response.json();
   localStorage.setItem("medclear_session_id", data.session_id);
+  localStorage.setItem("medclear_patient_phone", phone);
   return data;
 }
 
@@ -114,6 +115,7 @@ export async function signUpPatient({ name, phone, email }) {
   }
   const data = await response.json();
   localStorage.setItem("medclear_session_id", data.session_id);
+  localStorage.setItem("medclear_patient_phone", phone);
   return data;
 }
 
@@ -126,6 +128,19 @@ export async function getCurrentSession() {
   });
 
   if (!response.ok) {
+    // Session expired, try to auto-recreate it
+    const phone = localStorage.getItem("medclear_patient_phone");
+    if (phone) {
+      try {
+        const newSession = await createSession(phone);
+        return newSession;
+      } catch (err) {
+        console.warn("Could not auto-recreate session:", err);
+        localStorage.removeItem("medclear_session_id");
+        localStorage.removeItem("medclear_patient_phone");
+        return null;
+      }
+    }
     localStorage.removeItem("medclear_session_id");
     return null;
   }
@@ -143,5 +158,6 @@ export async function closeSession() {
     }
   } finally {
     localStorage.removeItem("medclear_session_id");
+    localStorage.removeItem("medclear_patient_phone");
   }
 }

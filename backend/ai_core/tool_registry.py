@@ -11,11 +11,11 @@ import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from RAG.retrieval import retrieve_hospital_context
-from ai_core.availability_service import create_appointment, get_doctor_availability
+from ai_core.availability_service import cancel_appointment, create_appointment, get_doctor_availability , reschedule_appointment
 from ai_core.doctor_service import get_all_doctors, get_doctors_by_department, get_doctors_by_specialization, get_doctors_by_name 
 from ai_core.lab_report_service import get_latest_lab_report
 from patient_docs.service import answer_from_document
-from ai_core.notification import send_twilio_sms
+from ai_core.notification import send_textbee_sms
 from app.models.patient import Patient
 from sqlalchemy import select
         
@@ -40,7 +40,8 @@ class PendingBooking:
 
 
 _pending_bookings: dict[UUID, PendingBooking] = {}
-
+_pending_cancellations: dict[UUID, dict] = {}
+_pending_reschedules: dict[UUID, PendingReschedule] = {}
 
 def _groq_tool(name: str, description: str, properties: dict, required: list[str] = None) -> dict:
     """Create a Groq tool definition."""
@@ -105,14 +106,16 @@ def get_groq_tools() -> list[dict]:
         # 2. CONSOLIDATED: Appointment Booking Workflow
         _groq_tool(
             "manage_appointment",
-            "Manage booking process. Use action='check' to check slots on a date, or action='book' to finalize an appointment after user confirms the exact time.",
+            "Manage appointment operations. Use action='check' to check available slots on a date, action='book' to finalize booking after user confirms, or action='cancel' to cancel an existing appointment using its appointment_id.",
             {
-                "action": {"type": "string", "enum": ["check", "book"]},
-                "doctor_id": {"type": "string", "description": "Doctor UUID"},
-                "appointment_date": {"type": "string", "format": "date", "description": f"Date in YYYY-MM-DD format (today is {today.isoformat()}; use future dates only)"},
-                "appointment_time": {"type": "string", "nullable": True, "description": "HH:MM (required only if action is 'book'); pass null when action is 'check'"}
+                "action": {"type": "string", "enum": ["check", "book", "cancel", "reschedule"]},                
+                "doctor_id": {"type": "string", "description": "Doctor UUID (required for 'check' and 'book')"},
+                "appointment_id": {"type": "string", "description": "Appointment UUID to reschedule (required for 'reschedule')"},
+                "appointment_date": {"type": "string", "format": "date", "description": f"For check/book/cancel: the target date. For reschedule: the NEW date. Today is {today.isoformat()}; use future dates only."},
+                "appointment_time": {"type": "string", "nullable": True, "description": "HH:MM. Required for book and reschedule. Pass null for check and cancel."},
+                "old_appointment_date": {"type": "string", "format": "date", "nullable": True, "description": "Required only for reschedule: the date of the EXISTING appointment being moved."}
             },
-            ["action", "doctor_id", "appointment_date"]
+            ["action"]
         ),
         _groq_tool(
             "patient_document_qa", 
@@ -225,6 +228,7 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
                 "ok": True,
                 "appointments": [
                     {
+                        "appointment_id": str(item.id),
                         "doctor_name": item.doctor.name,
                         "date": item.appointment_date.isoformat(),
                         "time": item.appointment_time.isoformat(timespec="minutes"),
@@ -265,6 +269,145 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
             "doctor": _doctor_data(doctor),
             "date": appointment_date.isoformat(),
             "available_slots": [slot.isoformat(timespec="minutes") for slot in slots],
+        }
+    if name == "manage_appointment" and action == "reschedule":
+        session_error = _needs_session(context)
+        if session_error:
+            return session_error
+
+        has_appointment_id = "appointment_id" in args and args["appointment_id"]
+        has_new_date = "appointment_date" in args and args["appointment_date"]
+        has_new_time = "appointment_time" in args and args["appointment_time"]
+
+        logger.info(
+            "TOOL_RESCHEDULE_APPOINTMENT: user_text='%s' is_conf=%s pending_exists=%s has_params=(id=%s,date=%s,time=%s)",
+            context.user_text,
+            _is_confirmation(context.user_text),
+            context.session_id in _pending_reschedules,
+            has_appointment_id, has_new_date, has_new_time,
+        )
+
+        # If NOT confirmation - validate and store
+        if not _is_confirmation(context.user_text):
+            if not has_appointment_id:
+                return {"ok": False, "error": "Please check your appointments first using get_patient_appointments, then provide the appointment_id."}
+            if not has_new_date or not has_new_time:
+                return {"ok": False, "error": "Please provide new date and time."}
+
+            # Get old appointment details for confirmation message
+            result = await context.db.execute(
+                select(Appointment).where(
+                    Appointment.id == UUID(str(args["appointment_id"])),
+                    Appointment.patient_id == context.patient_id,
+                    Appointment.status == "scheduled"
+                )
+            )
+            old_appointment = result.scalar_one_or_none()
+            
+            if not old_appointment:
+                return {"ok": False, "error": "Appointment not found."}
+
+            # Store pending reschedule
+            _pending_reschedules[context.session_id] = {
+                "appointment_id": UUID(str(args["appointment_id"])),
+                "old_date": old_appointment.appointment_date,
+                "old_time": old_appointment.appointment_time,
+                "new_date": date.fromisoformat(str(args["appointment_date"])),
+                "new_time": time.fromisoformat(str(args["appointment_time"]))
+            }
+
+            return {
+                "ok": False,
+                "requires_confirmation": True,
+                "instruction": "Ask the patient to confirm they want to reschedule this appointment before proceeding.",
+                "old_date": old_appointment.appointment_date.isoformat(),
+                "old_time": old_appointment.appointment_time.isoformat(timespec="minutes"),
+                "new_date": date.fromisoformat(str(args["appointment_date"])).isoformat(),
+                "new_time": time.fromisoformat(str(args["appointment_time"])).isoformat(timespec="minutes"),
+            }
+
+        # If confirmation - execute reschedule
+        pending = _pending_reschedules.get(context.session_id)
+        if not pending:
+            return {"ok": False, "error": "No pending reschedule found. Please provide appointment details again."}
+
+        # Call reschedule function
+        appointment = await reschedule_appointment(
+            context.patient_id,
+            pending["appointment_id"],
+            pending["new_date"],
+            pending["new_time"],
+            context.db
+        )
+
+        _pending_reschedules.pop(context.session_id, None)
+
+        if not appointment:
+            return {"ok": False, "error": "Could not reschedule appointment."}
+
+        logger.info("RESCHEDULE_CONFIRMED: appointment_id=%s old_date=%s old_time=%s new_date=%s new_time=%s doctor=%s", 
+                    pending["appointment_id"], 
+                    pending["old_date"].isoformat(), 
+                    pending["old_time"].isoformat(timespec="minutes"),
+                    appointment.appointment_date.isoformat(),
+                    appointment.appointment_time.isoformat(timespec="minutes"),
+                    appointment.doctor.name)
+
+        return {
+            "ok": True,
+            "rescheduled": True,
+            "doctor_name": appointment.doctor.name,
+            "old_date": pending["old_date"].isoformat(),
+            "old_time": pending["old_time"].isoformat(timespec="minutes"),
+            "new_date": appointment.appointment_date.isoformat(),
+            "new_time": appointment.appointment_time.isoformat(timespec="minutes"),
+        }
+
+    if name == "manage_appointment" and action == "cancel":
+        session_error = _needs_session(context)
+        if session_error:
+            return session_error
+        has_appointment_id = "appointment_id" in args and args["appointment_id"]
+
+        logger.info(
+            "TOOL_CANCEL_APPOINTMENT: user_text='%s' is_conf=%s has_appointment_id=%s",
+            context.user_text,
+            _is_confirmation(context.user_text),
+            has_appointment_id,
+        )
+        
+        if not has_appointment_id:
+            return {
+                "ok": False,
+                "error": "Please check your appointments first using get_patient_appointments, then provide the appointment_id to cancel.",
+            }
+        
+        appointment_id = UUID(str(args["appointment_id"]))
+        
+        # Store pending cancellation with just the appointment_id
+        if not _is_confirmation(context.user_text):
+            # First call - ask for confirmation
+            _pending_cancellations[context.session_id] = {"appointment_id": appointment_id}
+            return {
+                "ok": False,
+                "requires_confirmation": True,
+                "instruction": "Ask the patient to confirm they want to cancel this appointment before proceeding.",
+            }
+        
+        # Confirmed - execute cancellation
+        appointment = await cancel_appointment(context.patient_id, appointment_id, context.db)
+        _pending_cancellations.pop(context.session_id, None)
+        
+        if appointment is None:
+            return {"ok": False, "error": "No appointment found with that ID, or it's already cancelled."}
+        
+        logger.info("CANCELLATION_CONFIRMED: appointment_id=%s doctor=%s date=%s", appointment_id, appointment.doctor.name, appointment.appointment_date.isoformat())
+        return {
+            "ok": True,
+            "cancelled": True,
+            "doctor_name": appointment.doctor.name,
+            "appointment_date": appointment.appointment_date.isoformat(),
+            "appointment_time": appointment.appointment_time.isoformat(timespec="minutes"),
         }
 
     if name == "book_appointment" or (name == "manage_appointment" and action == "book"):
@@ -356,11 +499,42 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
             "source": answer.get("source"),
         }
     if name == "trigger_emergency_alert":
-        current_patient = context.patient_id if context.patient_id else "GUEST_USER"
-        logger.critical(f"EMERGENCY ALERT! Patient: {current_patient} | Symptom: {args.get('symptom_description')}")
+        current_patient_id = context.patient_id if context.patient_id else "GUEST_USER"
+        symptom = args.get('symptom_description', 'Unknown critical symptom')
         
+        logger.critical(f"EMERGENCY ALERT! Patient ID: {current_patient_id} | Symptom: {symptom}")
         
-        success = await send_twilio_sms("sms_appointment_reminders")
+        # Defaults
+        patient_phone = None
+        patient_name = "Unknown Patient (Guest)"
+        
+        # Get patient's phone number AND name from database
+        if context.patient_id:
+            # ✅ FIX: Use context.db instead of just db
+            patient = await context.db.get(Patient, context.patient_id)
+            if patient:
+                patient_phone = patient.phone
+                patient_name = patient.name 
+        
+        if not patient_phone:
+            return {
+                "ok": False,
+                "alert_sent": False,
+                "instruction": "Tell the user: 'Unable to verify your phone number. Please manually call 108 or go to the nearest emergency room immediately.'"
+            }
+        
+        # Format the dynamic SMS body
+        alert_message = (
+            f"🚨 EMERGENCY ALERT from MedClear 🚨\n"
+            f"Patient: {patient_name}\n"
+            f"Symptom: {symptom}\n"
+            f"Please respond immediately."
+        )
+        
+        success = await send_textbee_sms(
+            body=alert_message,
+            phone_number=patient_phone
+        )
         
         if success:
             return {
@@ -374,4 +548,3 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
                 "alert_sent": False,
                 "instruction": "Tell the user: 'My system failed to contact the hospital automatically. This is a critical emergency. You must manually call 108 or go to the emergency room immediately.'"
             }
-

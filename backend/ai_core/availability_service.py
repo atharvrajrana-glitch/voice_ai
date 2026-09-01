@@ -1,8 +1,10 @@
 from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.appointment import Appointment
 from app.models.doctor import Doctor
@@ -164,4 +166,79 @@ async def create_appointment(
     await db.commit()
     await db.refresh(appointment)
 
+    return appointment
+
+
+async def cancel_appointment(
+    patient_id: UUID,
+    appointment_id: UUID,
+    db: AsyncSession,
+) -> Appointment | None:
+    """Cancel a patient's appointment by appointment_id (primary key lookup)."""
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.id == appointment_id,
+            Appointment.patient_id == patient_id,
+            Appointment.status == "scheduled",
+        )
+    )
+    appointment = result.scalar_one_or_none()
+    if appointment is None:
+        return None
+
+    appointment.status = "cancelled"
+    await db.commit()
+    await db.refresh(appointment, attribute_names=["doctor"])
+    return appointment
+
+async def mark_past_appointments_done(db: AsyncSession) -> int:
+    """Mark all past scheduled appointments as 'done' automatically."""
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    current_date = now_ist.date()
+    current_time = now_ist.time()
+    
+    # Find all appointments that are in the past
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.status == "scheduled",
+            (Appointment.appointment_date < current_date) | 
+            ((Appointment.appointment_date == current_date) & (Appointment.appointment_time < current_time))
+        )
+    )
+    
+    past_appointments = result.scalars().all()
+    
+    # Mark them as done
+    for appointment in past_appointments:
+        appointment.status = "done"
+    
+    if past_appointments:
+        await db.commit()
+    
+    return len(past_appointments)
+
+
+async def reschedule_appointment(
+    patient_id: UUID,
+    appointment_id: UUID,
+    new_date: date,
+    new_time: time,
+    db: AsyncSession,
+) -> Appointment | None:
+    """Reschedule an existing appointment to a new date/time."""
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.id == appointment_id,
+            Appointment.patient_id == patient_id,
+            Appointment.status == "scheduled"
+        )
+    )
+    appointment = result.scalar_one_or_none()
+    if not appointment:
+        return None
+
+    appointment.appointment_date = new_date
+    appointment.appointment_time = new_time
+    await db.commit()
+    await db.refresh(appointment, attribute_names=["doctor"])
     return appointment

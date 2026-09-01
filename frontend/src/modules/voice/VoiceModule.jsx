@@ -119,10 +119,20 @@ export default function VoiceModule({ patientName = '' }) {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
+    // FIX 1: Secretly ping the mic to force Hardware Auto-Gain Control
+    // We don't await this so it doesn't block strict browsers like Safari
+    navigator.mediaDevices.getUserMedia({
+      audio: { autoGainControl: true, noiseSuppression: true, echoCancellation: true }
+    }).then(stream => stream.getTracks().forEach(t => t.stop())).catch(() => {});
+
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    
+    // FIX 2: Set continuous to TRUE so it doesn't kill the mic on quiet pauses
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
+
+    let finalHandled = false;
 
     recognition.onresult = (event) => {
       let finalText = '';
@@ -132,6 +142,10 @@ export default function VoiceModule({ patientName = '' }) {
         if (event.results[i].isFinal) finalText += t;
         else interimText += t;
       }
+
+      // FIX 3: Actually update the state so the UI shows live "Listening: [words]"
+      setInterim(interimText);
+
       if (finalText.trim()) {
         finalHandled = true;
         setInterim('');
@@ -141,15 +155,18 @@ export default function VoiceModule({ patientName = '' }) {
       }
     };
 
-    let finalHandled = false;
+    recognition.onerror = (event) => {
+      console.error("Speech Recognition Error:", event.error);
+      setPhase('idle');
+    };
 
-    recognition.onerror = () => setPhase('idle');
     recognition.onend = () => {
       if (!finalHandled) {
         setInterim('');
         setPhase('idle');
       }
     };
+
     recognitionRef.current = recognition;
     setPhase('listening');
     setInterim('');
@@ -160,7 +177,7 @@ export default function VoiceModule({ patientName = '' }) {
     async (heardText) => {
       window.speechSynthesis.cancel();
       setPhase('thinking');
-
+      console.log('[Phase Debug] Set to thinking at', Date.now());
       let fullSentence = '';
       let accumulatedTTSBuffer = '';
       let hasStartedSpeaking = false;
