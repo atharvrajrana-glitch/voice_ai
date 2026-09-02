@@ -115,63 +115,105 @@ export default function VoiceModule({ patientName = '' }) {
     window.speechSynthesis.speak(utter);
   }, []);
 
-  const startListening = useCallback(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    // FIX 1: Secretly ping the mic to force Hardware Auto-Gain Control
-    // We don't await this so it doesn't block strict browsers like Safari
-    navigator.mediaDevices.getUserMedia({
-      audio: { autoGainControl: true, noiseSuppression: true, echoCancellation: true }
-    }).then(stream => stream.getTracks().forEach(t => t.stop())).catch(() => {});
-
-    const recognition = new SpeechRecognition();
-    
-    // FIX 2: Set continuous to TRUE so it doesn't kill the mic on quiet pauses
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    let finalHandled = false;
-
-    recognition.onresult = (event) => {
-      let finalText = '';
-      let interimText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t;
-        else interimText += t;
-      }
-
-      // FIX 3: Actually update the state so the UI shows live "Listening: [words]"
-      setInterim(interimText);
-
-      if (finalText.trim()) {
-        finalHandled = true;
-        setInterim('');
-        setTranscriptLog((log) => [...log, { who: 'patient', text: finalText.trim() }]);
-        recognition.stop();
-        handlePatientTextRef.current(finalText.trim());
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.error("Speech Recognition Error:", event.error);
+  const startListening = useCallback(async () => {
+    try {
+      setPhase('listening');
+      setInterim('Recording...');
+      console.log('[Voice] Requesting microphone permission...');
+      
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          autoGainControl: true,
+          noiseSuppression: true,
+          echoCancellation: true,
+          sampleRate: 16000
+        }
+      });
+      
+      console.log('[Voice] Microphone access granted');
+      
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/wav' });
+      const audioChunks = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        console.log('[Voice] Recording stopped, transcribing...');
+        setInterim('Transcribing...');
+        
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+        
+        try {
+          // Create audio blob
+          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+          console.log(`[Voice] Audio blob size: ${audioBlob.size} bytes`);
+          
+          // Send to backend Whisper API
+          const formData = new FormData();
+          formData.append('file', audioBlob, 'audio.wav');
+          
+          const response = await fetch('/api/v1/transcribe', {
+            method: 'POST',
+            body: formData
+          });
+          
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Transcription failed');
+          }
+          
+          const data = await response.json();
+          console.log(`[Voice] Transcribed: "${data.text}" (confidence: ${(data.confidence * 100).toFixed(0)}%)`);
+          
+          setInterim('');
+          
+          if (data.text.trim()) {
+            setTranscriptLog((log) => [...log, { who: 'patient', text: data.text.trim() }]);
+            handlePatientTextRef.current(data.text.trim());
+          } else {
+            setPhase('idle');
+          }
+        } catch (err) {
+          console.error('[Voice] Transcription error:', err);
+          setInterim('');
+          setPhase('idle');
+          speak('I couldn\'t understand that. Could you please try again?', 'ai', () => startListening());
+        }
+      };
+      
+      // Start recording (5-10 seconds max)
+      mediaRecorder.start();
+      console.log('[Voice] Recording started...');
+      
+      // Stop after 10 seconds (user can click button to stop earlier)
+      const timeout = setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          console.log('[Voice] Auto-stopping after 10 seconds');
+          mediaRecorder.stop();
+        }
+      }, 10000);
+      
+      // Store timeout and mediaRecorder for manual stop
+      recognitionRef.current = { mediaRecorder, timeout };
+      
+    } catch (err) {
+      console.error('[Voice] Microphone error:', err);
       setPhase('idle');
-    };
-
-    recognition.onend = () => {
-      if (!finalHandled) {
-        setInterim('');
-        setPhase('idle');
+      setInterim('');
+      
+      if (err.name === 'NotAllowedError') {
+        speak('Microphone access is required. Please check your browser permissions.', 'ai', () => {});
+      } else {
+        speak('Could not access microphone. Please try again.', 'ai', () => {});
       }
-    };
-
-    recognitionRef.current = recognition;
-    setPhase('listening');
-    setInterim('');
-    recognition.start();
-  }, []);
+    }
+  }, [speak]);
 
   const handlePatientText = useCallback(
     async (heardText) => {
@@ -270,7 +312,22 @@ export default function VoiceModule({ patientName = '' }) {
 
   const stopAll = () => {
     window.speechSynthesis.cancel();
-    recognitionRef.current?.abort();
+    
+    // Handle both old Web Speech API and new MediaRecorder
+    if (recognitionRef.current) {
+      if (recognitionRef.current.mediaRecorder) {
+        // New: MediaRecorder (Whisper)
+        const { mediaRecorder, timeout } = recognitionRef.current;
+        if (mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+        clearTimeout(timeout);
+      } else if (recognitionRef.current.abort) {
+        // Old: Web Speech API
+        recognitionRef.current.abort();
+      }
+    }
+    
     setPhase('idle');
     setInterim('');
   };

@@ -526,9 +526,8 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
         # Format the dynamic SMS body
         alert_message = (
             f"🚨 EMERGENCY ALERT from MedClear 🚨\n"
-            f"Patient: {patient_name}\n"
-            f"Symptom: {symptom}\n"
-            f"Please respond immediately."
+            f"A patient requires immediate attention.\n"
+            f"Please log into the secure MedClear dashboard to view patient details."
         )
         
         success = await send_textbee_sms(

@@ -52,3 +52,4 @@ pypdf==6.4.0
 groq==0.34.0
 PyMuPDF==1.26.5
 pytesseract==0.3.13
+

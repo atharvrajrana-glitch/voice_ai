@@ -59,10 +59,9 @@ services:
       redis:
         condition: service_healthy
 
+    env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://medclear_user:123456@postgres:5432/medclear
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GROQ_API_KEY: ${GROQ_API_KEY}
       REDIS_URL: redis://redis:6379
 
     ports:
