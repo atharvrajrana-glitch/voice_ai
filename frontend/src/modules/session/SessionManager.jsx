@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { LoaderCircle, LogOut, ShieldCheck, Stethoscope } from "lucide-react";
+import { Loader2, LogOut, ShieldCheck, Stethoscope } from "lucide-react";
 import { closeSession, createSession, getCurrentSession, signUpPatient } from "../aiCore/api";
 
 const inputStyle = { width: "100%", padding: "13px 14px", border: "1px solid #3A2A5A", borderRadius: "9px", boxSizing: "border-box", font: "inherit", background: "#1F1729", color: "#E4D5F5" };
@@ -50,7 +50,7 @@ export default function SessionManager({ children }) {
       <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#0F0D15", fontFamily: "Inter, sans-serif" }}>
         <style>{`@keyframes sessionSpin { to { transform: rotate(360deg); } }`}</style>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", color: "#7C3AED", fontSize: "18px", fontWeight: 500 }}>
-          <LoaderCircle size={25} strokeWidth={2} style={{ animation: "sessionSpin .9s linear infinite" }} />
+          <Loader2 size={25} strokeWidth={2} style={{ animation: "sessionSpin .9s linear infinite" }} />
         </div>
       </main>
     );

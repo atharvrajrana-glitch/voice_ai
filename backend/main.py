@@ -55,6 +55,7 @@ from app.core.database import AsyncSessionLocal, get_db
 from patient_docs.ingest import ingest_pdf
 from patient_docs.service import answer_from_document
 from routers.sessions import router as sessions_router
+from routers.live import router as live_router
 from RAG.ingest import ingest_documents
 from ai_core.availability_service import mark_past_appointments_done
 
@@ -356,7 +357,7 @@ async def database_health():
         }
 
 app.include_router(sessions_router)
-
+app.include_router(live_router)
 
 
         

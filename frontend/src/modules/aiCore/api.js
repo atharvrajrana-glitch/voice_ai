@@ -1,5 +1,18 @@
-const AI_CORE_URL = `${import.meta.env.VITE_API_URL || "http://localhost:8080"}/api/ai-core`;
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+// Helper to get API URL dynamically based on where the app is accessed from
+const getApiUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // Use current host - if accessed from localhost, backend is localhost
+  // If accessed from IP, backend is the same IP
+  const protocol = window.location.protocol;
+  const host = window.location.hostname;
+  const port = window.location.port ? `:${window.location.port === '5173' ? '8080' : window.location.port}` : '';
+  return `${protocol}//${host}${port}`;
+};
+
+const AI_CORE_URL = `${getApiUrl()}/api/ai-core`;
+const API_BASE_URL = getApiUrl();
 
 export function detectBookingSuccess(aiResponse) {
   // Check if the AI response indicates a successful appointment booking

@@ -13,11 +13,11 @@ chromadb==1.5.9
 click==8.4.2
 colorama==0.4.6
 cryptography==50.0.0
-fastapi==0.141.1
+fastapi==0.115.0
 filelock==3.32.2
 flatbuffers==25.12.19
 fsspec==2026.7.0
-google-genai==2.17.0
+google-genai==2.21.0
 greenlet==3.5.5
 h11==0.16.0
 httpcore==1.0.9
@@ -42,7 +42,7 @@ PyYAML==6.0.3
 redis==8.1.0
 requests==2.34.2
 SQLAlchemy==2.0.52
-starlette==1.6.0
+starlette==0.38.0
 typing-extensions==4.16.0
 urllib3==2.7.0
 uvicorn==0.52.1
@@ -52,4 +52,3 @@ pypdf==6.4.0
 groq==0.34.0
 PyMuPDF==1.26.5
 pytesseract==0.3.13
-
