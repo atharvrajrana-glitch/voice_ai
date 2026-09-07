@@ -432,7 +432,7 @@ export default function VoiceModule({ patientName = '' }) {
     if (liveConnectingRef.current) return;
     liveConnectingRef.current = true;
 
-    setTranscriptLog((log) => [...log, { who: 'system', text: 'Connecting to Gemini Live...' }]);
+    console.log('[Live] Connecting to Gemini Live...');
 
     const ws = new WebSocket(`${WS_BASE}/ws/live?session_id=${sessionId}`);
     wsRef.current = ws;
@@ -443,7 +443,6 @@ export default function VoiceModule({ patientName = '' }) {
         console.warn('[Live] Connection timeout - falling back to Classic mode');
         liveConnectingRef.current = false;
         setUsingLive(false);
-        setTranscriptLog((log) => [...log, { who: 'system', text: 'Switched to Classic mode' }]);
         teardownLive();
         startListeningClassic();
       }
@@ -454,7 +453,7 @@ export default function VoiceModule({ patientName = '' }) {
       liveConnectingRef.current = false;
       clearTimeout(timeout);
       setUsingLive(true);
-      setTranscriptLog((log) => [...log, { who: 'system', text: 'Connected. Hold the mic button to speak.' }]);
+      console.log('[Live] Connected. Ready for mic input.');
 
       try {
         await startMicCapture(ws);
@@ -462,7 +461,6 @@ export default function VoiceModule({ patientName = '' }) {
       } catch (err) {
         console.error('[Live] Microphone error:', err);
         setUsingLive(false);
-        setTranscriptLog((log) => [...log, { who: 'system', text: 'Microphone access denied - switched to Classic mode' }]);
         teardownLive();
         startListeningClassic();
       }
@@ -514,7 +512,6 @@ export default function VoiceModule({ patientName = '' }) {
       if (!connected) {
         liveConnectingRef.current = false;
         setUsingLive(false);
-        setTranscriptLog((log) => [...log, { who: 'system', text: 'Switched to Classic mode' }]);
         teardownLive();
         startListeningClassic();
       }
@@ -548,11 +545,10 @@ export default function VoiceModule({ patientName = '' }) {
         audioContextRef.current = null;
       }
 
-      console.warn(`[Live] WebSocket closed (code ${event.code}). Reconnecting...`);
+        console.warn(`[Live] WebSocket closed (code ${event.code}). Reconnecting...`);
       if (isMountedRef.current) {
         setPhase('idle');
         setInterim('');
-        setTranscriptLog((log) => [...log, { who: 'system', text: 'Live connection reset. Reconnecting...' }]);
         window.setTimeout(() => {
           if (isMountedRef.current && !wsRef.current && !liveConnectingRef.current) {
             connectLive();

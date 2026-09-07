@@ -118,9 +118,20 @@ def get_groq_tools() -> list[dict]:
             ["action"]
         ),
         _groq_tool(
-            "patient_document_qa", 
-            "Answer a question about the authenticated patient's uploaded document. Never accept a patient ID or document content.", 
-            {"question": {"type": "string"}}, 
+            "patient_document_qa",
+            (
+                "MUST be used for ANY question about the patient's uploaded documents, "
+                "bills, invoices, medical reports, lab results, prescriptions, or PDFs. "
+                "Examples: total bill amount, itemized charges, due date, what is in my bill, "
+                "explain this report, etc. "
+                "Never answer these questions yourself — always call this tool."
+            ),
+            {
+                "question": {
+                    "type": "string",
+                    "description": "The exact question the user asked about their document or bill"
+                }
+            },
             ["question"]
         ),
         _groq_tool(
