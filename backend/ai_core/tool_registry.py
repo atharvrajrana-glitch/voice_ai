@@ -171,9 +171,11 @@ async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) ->
     """Run only allow-listed tools and return minimal JSON-safe values."""
     try:
         logger.info("TOOL_SELECTED: %s", name)
+
         if name == "search_hospital":
             hospital_context, sources = await retrieve_hospital_context(str(args["question"]).strip())
             result = {"ok": bool(hospital_context), "context": hospital_context or "", "sources": sources}
+
         elif name == "find_doctors":
             department = str(args.get("department") or "").strip()
             specialization = str(args.get("specialization") or "").strip()
@@ -182,47 +184,52 @@ async def execute_tool(name: str, args: dict[str, Any], context: ToolContext) ->
             if department:
                 doctors = await get_doctors_by_department(department, context.db)
             elif query:
-                # If query is provided, search by name first (prioritize exact doctor name)
                 doctors = await get_doctors_by_name(query, context.db)
-                # If no match by name, try specialization from query
                 if not doctors and specialization:
                     doctors = await get_doctors_by_specialization(specialization, context.db)
             elif specialization:
-                # Only if no query provided, search by specialization
                 doctors = await get_doctors_by_specialization(specialization, context.db)
             else:
                 doctors = await get_all_doctors(context.db)
 
             result = {"ok": True, "doctors": [_doctor_data(doctor) for doctor in doctors]}
-        elif name =="check_lab_report":
+
+        elif name == "check_lab_report":
             session_error = _needs_session(context)
-            if session_error :
+            if session_error:
                 return session_error
-            
-            report =await get_latest_lab_report(str(context.patient_id), context.db)
+
+            report = await get_latest_lab_report(str(context.patient_id), context.db)
             if not report:
-                result = {"ok":True,"found":False,"message":"No lab report found for this patient"}
+                result = {"ok": True, "found": False, "message": "No lab report found for this patient"}
             else:
                 result = {
-                    "ok":True,
-                    "found":True,
-                    "status":report.report_status,
-                    "summary": report.report_summary if report.report_status =="ready" else None,
+                    "ok": True,
+                    "found": True,
+                    "status": report.report_status,
+                    "summary": report.report_summary if report.report_status == "ready" else None,
                 }
+
         else:
             session_error = _needs_session(context)
             if session_error:
                 return session_error
             result = await _execute_patient_tool(name, args, context)
+
+        # ---------- SAFETY: never allow None ----------
+        if result is None:
+            logger.error("Tool %s returned None – converting to error", name)
+            result = {"ok": False, "error": "Internal error while processing the request."}
+
         logger.info("TOOL_EXECUTED: %s; TOOL_RESULT: %s", name, "success" if result.get("ok") else "failed")
         return result
-    except (KeyError, TypeError, ValueError):
-        logger.info("TOOL_EXECUTED: %s; TOOL_RESULT: invalid_input", name)
+
+    except (KeyError, TypeError, ValueError) as e:
+        logger.info("TOOL_EXECUTED: %s; TOOL_RESULT: invalid_input (%s)", name, e)
         return {"ok": False, "error": "I could not understand the appointment details. Please provide the doctor, date, and time again."}
     except Exception:
         logger.exception("TOOL_EXECUTED: %s; TOOL_RESULT: failed", name)
         return {"ok": False, "error": "The hospital system could not complete that request right now."}
-
 
 async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolContext) -> dict[str, Any]:
     from ai_core.service import get_patient_appointments, get_upcoming_patient_appointment
@@ -422,11 +429,10 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
         }
 
     if name == "book_appointment" or (name == "manage_appointment" and action == "book"):
-        # Check if this is a confirmation call (no parameters provided, but we have pending booking)
         has_doctor_id = "doctor_id" in args and args["doctor_id"]
         has_date = "appointment_date" in args and args["appointment_date"]
         has_time = "appointment_time" in args and args["appointment_time"]
-        
+
         logger.info(
             "TOOL_BOOK_APPOINTMENT: user_text='%s' is_conf=%s pending_exists=%s has_params=(doc=%s,date=%s,time=%s) args_keys=%s",
             context.user_text,
@@ -435,14 +441,57 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
             has_doctor_id, has_date, has_time,
             list(args.keys())
         )
-        
-        # If confirmation is in user text and we have a pending booking, use it
+
+        # -------------------------------------------------------------
+        # NEW: Live-friendly direct confirmation
+        # If user said "yes" AND the model also sent full parameters,
+        # just book it directly (pending entry may have been lost due to reconnect)
+        # -------------------------------------------------------------
+        if _is_confirmation(context.user_text) and has_doctor_id and has_date and has_time:
+            try:
+                doctor_id = UUID(str(args["doctor_id"]))
+                appointment_date = date.fromisoformat(str(args["appointment_date"]))
+                appointment_time = time.fromisoformat(str(args["appointment_time"]))
+            except (ValueError, TypeError):
+                return {
+                    "ok": False,
+                    "error": "I could not understand the appointment details. Please provide the doctor, date, and time again.",
+                }
+
+            logger.info(" DIRECT CONFIRMATION BOOKING (Live-friendly) doctor_id=%s date=%s time=%s",
+                        doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"))
+
+            appointment = await create_appointment(
+                context.patient_id, doctor_id, appointment_date, appointment_time, context.db
+            )
+            await context.db.refresh(appointment, attribute_names=["doctor"])
+            _pending_bookings.pop(context.session_id, None)
+
+            logger.info("BOOKING_CONFIRMED: doctor_id=%s date=%s time=%s appointment_id=%s",
+                        doctor_id, appointment_date.isoformat(),
+                        appointment_time.isoformat(timespec="minutes"), appointment.id)
+
+            return {
+                "ok": True,
+                "booked": True,
+                "is_booking_success": True,
+                "doctor_name": appointment.doctor.name,
+                "date": appointment_date.isoformat(),
+                "time": appointment_time.isoformat(timespec="minutes"),
+                "appointment_id": str(appointment.id),
+                "status": appointment.status,
+            }
+
+        # -------------------------------------------------------------
+        # Original pending-booking logic (kept for compatibility)
+        # -------------------------------------------------------------
         if _is_confirmation(context.user_text) and context.session_id in _pending_bookings and not (has_doctor_id and has_date and has_time):
             pending = _pending_bookings[context.session_id]
             doctor_id = pending.doctor_id
             appointment_date = pending.appointment_date
             appointment_time = pending.appointment_time
-            logger.info("✓ CONFIRMATION_BOOKING using pending booking doctor_id=%s date=%s time=%s", doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"))
+            logger.info("✓ CONFIRMATION_BOOKING using pending booking doctor_id=%s date=%s time=%s",
+                        doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"))
         else:
             # First call with parameters - validate and store
             if not has_doctor_id or not has_date:
@@ -455,19 +504,27 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
                     "ok": False,
                     "error": "I could not understand the appointment time. Please provide the time.",
                 }
-            
-            doctor_id = UUID(str(args["doctor_id"]))
-            appointment_date = date.fromisoformat(str(args["appointment_date"]))
-            appointment_time = time.fromisoformat(str(args["appointment_time"]))
+
+            try:
+                doctor_id = UUID(str(args["doctor_id"]))
+                appointment_date = date.fromisoformat(str(args["appointment_date"]))
+                appointment_time = time.fromisoformat(str(args["appointment_time"]))
+            except (ValueError, TypeError):
+                return {
+                    "ok": False,
+                    "error": "I could not understand the appointment details. Please provide the doctor, date, and time again.",
+                }
+
             requested = PendingBooking(doctor_id, appointment_date, appointment_time)
-            
-            logger.info("FIRST_BOOKING_CALL: doctor_id=%s date=%s time=%s user_text='%s'", doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"), context.user_text)
-            
-            # Check if we have a DIFFERENT pending booking - don't overwrite unless user is confirming a NEW booking
+
+            logger.info("FIRST_BOOKING_CALL: doctor_id=%s date=%s time=%s user_text='%s'",
+                        doctor_id, appointment_date.isoformat(),
+                        appointment_time.isoformat(timespec="minutes"), context.user_text)
+
             if context.session_id in _pending_bookings and not _is_confirmation(context.user_text):
                 pending = _pending_bookings[context.session_id]
-                logger.warning("NEW_BOOKING_ATTEMPT while pending exists: old_date=%s new_date=%s", pending.appointment_date.isoformat(), appointment_date.isoformat())
-                # Clear the old pending booking and start fresh
+                logger.warning("NEW_BOOKING_ATTEMPT while pending exists: old_date=%s new_date=%s",
+                            pending.appointment_date.isoformat(), appointment_date.isoformat())
                 _pending_bookings.pop(context.session_id, None)
 
             if not _is_confirmation(context.user_text):
@@ -487,7 +544,11 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
         )
         await context.db.refresh(appointment, attribute_names=["doctor"])
         _pending_bookings.pop(context.session_id, None)
-        logger.info("BOOKING_CONFIRMED: doctor_id=%s date=%s time=%s appointment_id=%s", doctor_id, appointment_date.isoformat(), appointment_time.isoformat(timespec="minutes"), appointment.id)
+
+        logger.info("BOOKING_CONFIRMED: doctor_id=%s date=%s time=%s appointment_id=%s",
+                    doctor_id, appointment_date.isoformat(),
+                    appointment_time.isoformat(timespec="minutes"), appointment.id)
+
         return {
             "ok": True,
             "booked": True,
@@ -495,7 +556,7 @@ async def _execute_patient_tool(name: str, args: dict[str, Any], context: ToolCo
             "doctor_name": appointment.doctor.name,
             "date": appointment_date.isoformat(),
             "time": appointment_time.isoformat(timespec="minutes"),
-            "appointment_id": str(appointment.id),  
+            "appointment_id": str(appointment.id),
             "status": appointment.status,
         }
 

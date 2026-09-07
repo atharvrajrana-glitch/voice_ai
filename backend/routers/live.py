@@ -47,6 +47,9 @@ class LiveSessionHandle:
         self.has_document = False  # ✅ Track if user uploaded a PDF
         self.resumption_token: str | None = None
 
+        self.last_doctor_id: str | None = None
+        self.last_doctor_name: str | None = None
+
 
     async def attach_browser(self, ws: WebSocket):
         async with self.lock:
@@ -182,22 +185,28 @@ def get_gemini_tools():
 async def _create_live_session(handle: LiveSessionHandle):
     model = "gemini-3.1-flash-live-preview"
 
-    config = types.LiveConnectConfig(
-        response_modalities=["AUDIO"],
-        system_instruction=handle.build_system_instruction(),
-        tools=get_gemini_tools(),
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
-        realtime_input_config=types.RealtimeInputConfig(
+    config_kwargs = {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": handle.build_system_instruction(),
+        "tools": get_gemini_tools(),
+        "input_audio_transcription": types.AudioTranscriptionConfig(),
+        "output_audio_transcription": types.AudioTranscriptionConfig(),
+        "realtime_input_config": types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(disabled=True)
         ),
-    )
+    }
+
+    # Session Resumption
     if handle.resumption_token:
         config_kwargs["session_resumption"] = types.SessionResumptionConfig(
             handle=handle.resumption_token
         )
-        logger.critical(f" Recoonecting with resumption token:{handle.resumption_token[:20]}...")
+        logger.critical(
+            f"♻️  Reconnecting with resumption token: {str(handle.resumption_token)[:40]}..."
+        )
+
     config = types.LiveConnectConfig(**config_kwargs)
+
     cm = client.aio.live.connect(model=model, config=config)
     live_session = await cm.__aenter__()
     live_session._cm = cm
@@ -227,13 +236,28 @@ async def _gemini_receive_loop(handle: LiveSessionHandle, db: AsyncSession, db_s
                 sc = response.server_content
                 ts = time.time() - handle.created_at
 
+                                # Capture resumption token (safe version)
+                                # Safe resumption token capture (will not crash)
                 if response.session_resumption_update:
-                    new_token = getattr(response.session_resumption_update,"token", None) or \
-                                getattr(response.session_resumption_update, "handle")
-                    
-                    if new_token:
-                        handle.resumption_token = new_token
-                        logger.critical(f"saved new resumption token:{str(new_token)[:30]}...")
+                    try:
+                        update = response.session_resumption_update
+                        new_token = None
+
+                        # Try common attribute names safely
+                        for attr_name in ("token", "resumption_token", "handle", "session_handle", "id"):
+                            if hasattr(update, attr_name):
+                                val = getattr(update, attr_name)
+                                if val:
+                                    new_token = val
+                                    break
+
+                        if new_token:
+                            handle.resumption_token = new_token
+                            logger.critical(f"Saved resumption token: {str(new_token)[:50]}...")
+                        else:
+                            logger.debug(f"Resumption update received but no token found: {type(update)}")
+                    except Exception as e:
+                        logger.warning(f" Failed to extract resumption token: {e}")
 
                 if sc and sc.turn_complete:
                     handle.turn_active = False
@@ -254,7 +278,7 @@ async def _gemini_receive_loop(handle: LiveSessionHandle, db: AsyncSession, db_s
                 if sc and sc.input_transcription and sc.input_transcription.text:
                     handle.accumulated_user_transcript = sc.input_transcription.text
                     logger.critical(
-                        f"📢 [TURN {handle.turn_id}@{ts:.1f}s] User transcript: "
+                        f" [TURN {handle.turn_id}@{ts:.1f}s] User transcript: "
                         f"{handle.accumulated_user_transcript}"
                     )
                     await handle.send_to_browser({
@@ -265,14 +289,14 @@ async def _gemini_receive_loop(handle: LiveSessionHandle, db: AsyncSession, db_s
                 if sc and sc.output_transcription and sc.output_transcription.text:
                     current_ai_transcript += sc.output_transcription.text
                     logger.critical(
-                        f"🎤 [TURN {handle.turn_id}@{ts:.1f}s] AI transcript: "
+                        f"[TURN {handle.turn_id}@{ts:.1f}s] AI transcript: "
                         f"{sc.output_transcription.text}"
                     )
                     await handle.send_to_browser({
                         "type": "ai_transcript",
                         "text": sc.output_transcription.text,
                     })
-
+                # Tool calling with doctor_id protection
                 if response.tool_call:
                     logger.critical(f" [TURN {handle.turn_id}@{ts:.1f}s] Tool call")
                     function_responses = []
@@ -282,45 +306,59 @@ async def _gemini_receive_loop(handle: LiveSessionHandle, db: AsyncSession, db_s
                         patient_id=db_session.patient_id,
                         user_text=handle.accumulated_user_transcript,
                     )
+
                     for fc in response.tool_call.function_calls:
                         args = dict(fc.args or {})
 
-        # Fix bad/missing doctor_id
-        if fc.name == "manage_appointment" and handle.last_doctor_id:
-            action = args.get("action")
-            doctor_id = args.get("doctor_id")
-            if action in ("check", "book"):
-                if (not doctor_id or 
-                    str(doctor_id).startswith("1a2b3c4d") or 
-                    len(str(doctor_id)) < 30):
-                    logger.warning(f"⚠️ Bad doctor_id '{doctor_id}' → using last known {handle.last_doctor_id}")
-                    args["doctor_id"] = handle.last_doctor_id
+                        # Fix bad/missing doctor_id
+                        if fc.name == "manage_appointment" and handle.last_doctor_id:
+                            action = args.get("action")
+                            if action in ("check", "book"):
+                                incoming_id = str(args.get("doctor_id") or "")
+                                if incoming_id != handle.last_doctor_id:
+                                    logger.warning(
+                                        f"model sent different doctor_id'{incoming_id}'"
+                                        f" forcing last known {handle.last_doctor_id}"
+                                    )
+                                    args["doctor_id"] = handle.last_doctor_id
+                        try:
+                            result = await execute_tool(fc.name, args, context)
+                        except Exception as e:
+                            logger.error(f"Tool {fc.name} failed: {e}")
+                            result = {"error": str(e)}
 
-        try:
-            result = await execute_tool(fc.name, args, context)
-        except Exception as e:
-            logger.error(f"Tool {fc.name} failed: {e}")
-            result = {"error": str(e)}
+                        # Remember doctor from find_doctors
+                        if (
+                            fc.name == "find_doctors"
+                            and result.get("ok")
+                            and result.get("doctors")
+                        ):
+                            doctors = result["doctors"]
+                            if len(doctors) == 1:
+                                handle.last_doctor_id = doctors[0]["id"]
+                                handle.last_doctor_name = doctors[0]["name"]
+                                logger.critical(
+                                    f"Remembered doctor: {handle.last_doctor_name} "
+                                    f"({handle.last_doctor_id})"
+                                )
 
-        # Remember doctor from find_doctors
-        if fc.name == "find_doctors" and result.get("ok") and result.get("doctors"):
-            doctors = result["doctors"]
-            if len(doctors) == 1:
-                handle.last_doctor_id = doctors[0]["id"]
-                handle.last_doctor_name = doctors[0]["name"]
-                logger.critical(f"📌 Remembered doctor: {handle.last_doctor_name} ({handle.last_doctor_id})")
+                        function_responses.append(
+                            types.FunctionResponse(
+                                name=fc.name,
+                                id=fc.id,
+                                response={"result": result},
+                            )
+                        )
 
-        function_responses.append(
-            types.FunctionResponse(name=fc.name, id=fc.id, response={"result": result})
-        )
-
-    await handle.live_session.send_tool_response(function_responses=function_responses)
+                    await handle.live_session.send_tool_response(
+                        function_responses=function_responses
+                    )
 
                 if sc and sc.generation_complete:
                     logger.critical(f"🏁 [TURN {handle.turn_id}@{ts:.1f}s] Generation complete")
 
             logger.warning(
-                f"⚠️ [SESSION {handle.session_id}] Gemini closed the stream – "
+                f" [SESSION {handle.session_id}] Gemini closed the stream – "
                 f"will reconnect with history"
             )
 
@@ -343,7 +381,7 @@ async def _gemini_receive_loop(handle: LiveSessionHandle, db: AsyncSession, db_s
 
         await asyncio.sleep(0.6)
 
-    logger.critical(f"🛑 [SESSION {handle.session_id}] Receive loop permanently stopped")
+    logger.critical(f" [SESSION {handle.session_id}] Receive loop permanently stopped")
 
 
 # ---------------------------------------------------------------------------
